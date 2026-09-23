@@ -5,6 +5,7 @@
   "type": "module",
   "main": "server.js",
   "scripts": {
+    "preinstall": "python3 .restore/restore.py",
     "start": "node server.js"
   },
   "engines": {
