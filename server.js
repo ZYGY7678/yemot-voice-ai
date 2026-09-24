@@ -22,6 +22,23 @@ const SYSTEM = [
   'אל תשתמש ב-Markdown. שמור על תשובות קצרות ומתאימות להקראה בטלפון.'
 ].filter(Boolean).join('\n\n');
 
+async function disableYemotWaitMusic() {
+  const token=String(process.env.YEMOT_API_KEY||'').trim();
+  if(!token) return;
+  try {
+    const qs=new URLSearchParams({
+      token,
+      path:'ivr2:/3',
+      api_wait_answer_music_on_hold:'no',
+      api_wait_play:'no'
+    });
+    const r=await fetch('https://www.call2all.co.il/ym/api/UpdateExtension?'+qs);
+    console.log('[YEMOT_WAIT_MUSIC_DISABLED]',r.status,await r.text());
+  } catch(e) {
+    console.error('[YEMOT_WAIT_MUSIC_CONFIG_FAIL]',e?.message||e);
+  }
+}
+
 const router = YemotRouter({
   printLog:true,
   timeout:120000,
@@ -291,4 +308,4 @@ process.on('unhandledRejection',e=>{if(!(e instanceof ExitError))console.error(e
 process.on('uncaughtException',e=>{if(!(e instanceof ExitError))console.error(e)});
 
 const port=process.env.PORT||3000;
-app.listen(port,()=>console.log('Server running on port '+port));
+app.listen(port,()=>{ console.log('Server running on port '+port); disableYemotWaitMusic(); });
