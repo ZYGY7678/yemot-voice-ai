@@ -201,7 +201,7 @@ async function callHandler(call) {
     live=await connectLive();
     console.log('[CALL '+id+'] Gemini 3.8 Live ready');
 
-    await call.id_list_message([{type:'text',data:'שלום, אני כאן. אפשר לדבר. אחרי שסיימת לדבר, הקש סולמית.'}],{prependToNextAction:true});
+    await call.id_list_message([{type:'text',data:'שלום אני כאן אפשר לדבר אחרי שסיימת לדבר הקש סולמית'}],true);
 
     // Each turn is ended explicitly by the caller with #.
     // Yemot's record mode receives the recording only after the caller
@@ -210,7 +210,7 @@ async function callHandler(call) {
       activeCalls.get(id).lastActivity=Date.now();
 
       const recPath=await call.read(
-        [{type:'text',data:'אחרי שסיימת לדבר, הקש סולמית.'}],
+        [{type:'text',data:'אחרי שסיימת לדבר הקש סולמית'}],
         'record',
         {
           min_length:1,
@@ -241,15 +241,15 @@ async function callHandler(call) {
 
       await call.id_list_message(
         [{type:'text',data:result.reply}],
-        {prependToNextAction:true}
+        true
       );
     }
   } catch(e) {
     console.error('[CALL '+id+'] ERROR',e?.stack||e);
     try {
       await call.id_list_message(
-        [{type:'text',data:'מצטער, הייתה תקלה זמנית. נסה שוב.'}],
-        {prependToNextAction:true}
+        [{type:'text',data:'מצטער הייתה תקלה זמנית נסה שוב'}],
+        true
       );
     } catch {}
   } finally {
