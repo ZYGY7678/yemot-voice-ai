@@ -38,7 +38,8 @@ async function disableYemotWaitMusic() {
       api_wait_play:'yes',
       api_wait_answer_music_on_hold:'no',
       api_wait_answer_music_on_hold_different:'',
-      option_record:'2-1-30',
+      api_record_beep:'no',
+      option_record:'1-1-1',
       api_timeout:'60',
       tts_rate:'2',
       rate:'2'
@@ -303,7 +304,7 @@ async function callHandler(call) {
         'record',
         {
           min_length:1,
-          max_length:30,
+          max_length:1,
           no_confirm_menu:true,
           save_on_hangup:false
         }
