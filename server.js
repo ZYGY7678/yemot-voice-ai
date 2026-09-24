@@ -196,13 +196,62 @@ async function callHandler(call) {
   activeCalls.set(id,{phone:p,callId:id,lastActivity:Date.now()});
   console.log('[CALL '+id+'] started phone='+p);
 
+  let live;
   try {
-    const live=await connectLive();
-    console.log('[CALL '+id+'] Live session ready; awaiting true realtime audio bridge');
-    // Keep the Yemot HTTP call alive. Actual bidirectional streaming requires a
-    // Yemot media/WebSocket bridge; record mode is deliberately not used here.
-    await call.id_list_message([{type:'text',data:'החיבור החי מוכן'}]);
+    live=await connectLive();
+    console.log('[CALL '+id+'] Gemini 3.8 Live ready');
+
+    await call.id_list_message([{type:'text',data:'שלום, אני כאן. אפשר לדבר.'}],{prependToNextAction:true});
+
+    // Yemot currently supplies recordings as files, so use one short recording
+    // per conversational turn. No hash/keypad confirmation is requested.
+    for(let turn=0;turn<30;turn++){
+      activeCalls.get(id).lastActivity=Date.now();
+
+      const recPath=await call.read(
+        [{type:'text',data:' '}],
+        'record',
+        {
+          min_length:1,
+          max_length:30,
+          lenght_min:1,
+          lenght_max:30,
+          no_confirm_menu:true,
+          save_on_hangup:true
+        }
+      );
+
+      if(!recPath) break;
+      console.log('[CALL '+id+'] recording='+recPath);
+
+      const audio=await downloadRecording(String(recPath));
+      const result=await answerAudioLive(live,audio);
+
+      conversations.push({
+        phone:p,
+        callId:id,
+        transcript:result.transcript,
+        reply:result.reply,
+        at:new Date().toISOString()
+      });
+
+      activeCalls.get(id).lastActivity=Date.now();
+
+      await call.id_list_message(
+        [{type:'text',data:result.reply}],
+        {prependToNextAction:true}
+      );
+    }
+  } catch(e) {
+    console.error('[CALL '+id+'] ERROR',e?.stack||e);
+    try {
+      await call.id_list_message(
+        [{type:'text',data:'מצטער, הייתה תקלה זמנית. נסה שוב.'}],
+        {prependToNextAction:true}
+      );
+    } catch {}
   } finally {
+    try { live?.session?.close?.(); } catch {}
     activeCalls.delete(id);
     console.log('[CALL '+id+'] ended');
   }
