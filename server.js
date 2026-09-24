@@ -192,20 +192,15 @@ async function callHandler(call) {
 
   let live;
   try {
-    live=await connectLive();
-    console.log('[CALL '+id+'] Gemini 3.8 Live ready');
-
-    // Speak immediately, before waiting for the caller's recording.
-    await call.id_list_message(
-      [{type:'text',data:'שלום מה נשמע'}],
-      {prependToNextAction:true}
-    );
-
     for(let turn=0;turn<30;turn++){
       activeCalls.get(id).lastActivity=Date.now();
 
+      // Put the greeting directly on the recording action so Yemot speaks it immediately.
+      // Start Gemini connection in parallel while the caller is recording.
+      const livePromise = live ? Promise.resolve(live) : connectLive();
+
       const recPath=await call.read(
-        [],
+        [{type:'text',data:'שלום מה נשמע'}],
         'record',
         {
           min_length:1,
@@ -214,6 +209,9 @@ async function callHandler(call) {
           save_on_hangup:false
         }
       );
+
+      live = await livePromise;
+      console.log('[CALL '+id+'] Gemini 3.8 Live ready');
 
       if(!recPath) break;
       console.log('[CALL '+id+'] recording='+recPath);
