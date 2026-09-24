@@ -114,6 +114,8 @@ async function connectLive() {
   for (const apiKey of apiKeys) {
     try {
       const ai = new GoogleGenAI({apiKey});
+      const queue = [];
+      let wake;
       const session = await timeout(ai.live.connect({
         model:LIVE_MODEL,
         config:{
@@ -123,12 +125,19 @@ async function connectLive() {
           systemInstruction:{parts:[{text:SYSTEM}]}
         },
         callbacks:{
+          onmessage:message=>{
+            queue.push(message);
+            if(wake){const w=wake;wake=null;w();}
+          },
           onerror:e=>console.error('[LIVE_ERROR]',e?.message||e),
           onclose:e=>console.log('[LIVE_CLOSE]',e?.reason||'')
         }
       }),15000,'Gemini Live connect');
       console.log('[GEMINI_LIVE_CONNECTED]',LIVE_MODEL);
-      return session;
+      return {session,queue,getMessage:async()=>{
+        while(!queue.length) await new Promise(resolve=>{wake=resolve});
+        return queue.shift();
+      }};
     } catch(e) {
       last=e;
       console.error('[GEMINI_LIVE_CONNECT_FAIL]',String(e?.message||e));
@@ -137,49 +146,44 @@ async function connectLive() {
   throw last || new Error('No Gemini API key available');
 }
 
-async function liveTurn(session, buf) {
+async function liveTurn(live, buf) {
   const {pcm,sampleRate}=wavToPcm(buf);
-  session.sendRealtimeInput({
+  live.session.sendRealtimeInput({
     audio:{
       data:pcm.toString('base64'),
       mimeType:'audio/pcm;rate='+sampleRate
     }
   });
+  live.session.sendRealtimeInput({audioStreamEnd:true});
 
-  // Flush the completed recording so VAD produces the response promptly.
-  session.sendRealtimeInput({audioStreamEnd:true});
-
-  return await new Promise((resolve,reject)=>{
+  return await new Promise(async(resolve,reject)=>{
     let inputTranscript='';
     let outputTranscript='';
-    let settled=false;
-    const finish=(err)=>{
-      if(settled)return;
-      settled=true;
-      clearTimeout(timer);
-      err?reject(err):resolve({transcript:clean(inputTranscript),reply:clean(outputTranscript)});
-    };
-    const timer=setTimeout(()=>finish(Object.assign(new Error('Timeout: Gemini 3.8 Live'),{status:408})),25000);
-
-    // The SDK callback receives Live server messages.
-    const old = session._callbacks?.onmessage;
-    if (!session._callbacks) session._callbacks = {};
-    session._callbacks.onmessage = (message)=>{
-      try {
+    const timer=setTimeout(()=>reject(Object.assign(new Error('Timeout: Gemini 3.8 Live'),{status:408})),25000);
+    try {
+      while(true) {
+        const message=await Promise.race([
+          live.getMessage(),
+          new Promise((_,rej)=>setTimeout(()=>rej(Object.assign(new Error('Timeout: Gemini 3.8 Live'),{status:408})),25000))
+        ]);
         const sc=message?.serverContent;
-        if(sc?.inputTranscription?.text) inputTranscript += ' '+sc.inputTranscription.text;
-        if(sc?.outputTranscription?.text) outputTranscript += ' '+sc.outputTranscription.text;
-        if(sc?.turnComplete){
-          finish(null);
+        if(sc?.inputTranscription?.text) inputTranscript+=' '+sc.inputTranscription.text;
+        if(sc?.outputTranscription?.text) outputTranscript+=' '+sc.outputTranscription.text;
+        if(sc?.turnComplete) {
+          clearTimeout(timer);
+          resolve({transcript:clean(inputTranscript),reply:clean(outputTranscript)});
+          return;
         }
-      } catch(e){ finish(e); }
-      if(typeof old==='function') old(message);
-    };
+      }
+    } catch(e) {
+      clearTimeout(timer);
+      reject(e);
+    }
   });
 }
 
-async function answerAudioLive(session, buf) {
-  const out=await liveTurn(session,buf);
+async function answerAudioLive(live, buf) {
+  const out=await liveTurn(live,buf);
   console.log('[TRANSCRIPT]',JSON.stringify(out.transcript));
   console.log('[AI_REPLY]',JSON.stringify(out.reply));
   if(!out.reply) throw new Error('Empty Live response');
@@ -266,7 +270,7 @@ async function callHandler(call) {
     console.error('[CALL '+id+'] handler failed',e);
     throw e;
   }finally{
-    try{liveSession?.close?.()}catch{}
+    try{liveSession?.session?.close?.()}catch{}
     activeCalls.delete(id);
     console.log('[CALL '+id+'] ended');
   }
@@ -291,7 +295,7 @@ app.post('/api/test-ai',auth,async(req,res)=>{
   let s;
   try{
     s=await connectLive();
-    s.sendClientContent({
+    s.session.sendClientContent({
       turns:{role:'user',parts:[{text:String(req.body?.prompt||'שלום, בדוק תקינות')}]},
       turnComplete:true
     });
@@ -299,7 +303,7 @@ app.post('/api/test-ai',auth,async(req,res)=>{
   }catch(e){
     res.status(500).json({ok:false,error:e.message});
   }finally{
-    try{s?.close?.()}catch{}
+    try{s?.session?.close?.()}catch{}
   }
 });
 app.get('/health',(req,res)=>res.json({
