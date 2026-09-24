@@ -295,9 +295,8 @@ async function callHandler(call) {
       activeCalls.get(id).lastActivity=Date.now();
 
       const recordStarted=Date.now();
-      const recordPrompt = turn===0
-        ? [{type:'text',data:'שלום, מה נשמע? כאן צחי, אפשר לשאול שאלה אחרי הצפצוף, ובסיום להקיש סולמית'}]
-        : SILENT_RECORD_PROMPT;
+      // אין תשובת פתיחה מקומית — ההקלטה נשלחת ישירות ל-Gemini.
+      const recordPrompt = SILENT_RECORD_PROMPT;
       const recPath=await call.read(
         recordPrompt,
         'record',
