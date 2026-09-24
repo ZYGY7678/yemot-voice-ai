@@ -12,8 +12,8 @@ app.use(express.json());
 const apiKeys = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '')
   .split(',').map(x => x.trim()).filter(Boolean);
 
-const LIVE_MODEL = 'gemini-3.8-live';
-const AUDIO_MODELS = ['gemini-3.6-flash','gemini-3.5-flash-lite'];
+const LIVE_MODEL = process.env.LIVE_MODEL || 'gemini-3.8-live';
+const AUDIO_MODELS = (process.env.GEMINI_MODELS || 'gemini-3-flash-preview,gemini-3.8-flash,gemini-3.6-flash,gemini-3.5-flash,gemini-3.5-flash-lite').split(',').map(x=>x.trim()).filter(Boolean);
 const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 55000);
 const DASHBOARD_PASSWORD = String(process.env.DASHBOARD_PASSWORD || '1234');
 const SYSTEM = [
@@ -29,12 +29,12 @@ async function disableYemotWaitMusic() {
   try {
     const qs=new URLSearchParams({
       token,
-      path:'ivr2:/3',
+      path:'ivr2:/1',
       api_wait_answer_music_on_hold:'no',
       api_wait_play:'no'
     });
     const r=await fetch('https://www.call2all.co.il/ym/api/UpdateExtension?'+qs);
-    console.log('[YEMOT_WAIT_MUSIC_DISABLED]',r.status,await r.text());
+    console.log('[YEMOT_EXTENSION_1_CONFIGURED]',r.status,await r.text());
   } catch(e) {
     console.error('[YEMOT_WAIT_MUSIC_CONFIG_FAIL]',e?.message||e);
   }
