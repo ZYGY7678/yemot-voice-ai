@@ -54,10 +54,6 @@ function clean(t) {
     .trim();
 }
 
-function limitWords(t,max=80) {
-  return String(t||'').trim().split(/\\s+/).filter(Boolean).slice(0,max).join(' ');
-}
-
 function callerPhone(c) {
   return String(c?.values?.ApiPhone??c?.req?.query?.ApiPhone??c?.req?.body?.ApiPhone??'').trim()||'לא מזוהה';
 }
@@ -79,7 +75,6 @@ async function downloadRecording(path) {
   throw new Error('YEMOT credentials are missing');
 }
 
-// Extract raw PCM from a normal PCM WAV without adding another audio conversion service.
 function wavToPcm(buf) {
   if (!Buffer.isBuffer(buf) || buf.length < 44) throw new Error('Invalid WAV');
   if (buf.toString('ascii',0,4)!=='RIFF' || buf.toString('ascii',8,12)!=='WAVE') {
@@ -105,7 +100,6 @@ function wavToPcm(buf) {
   if(audioFormat!==1 || !channels || !sampleRate || bits!==16 || dataStart==null){
     throw new Error('WAV must contain PCM 16-bit audio');
   }
-  // Live API accepts mono/stereo PCM; the sample rate is declared in the MIME type.
   return {pcm:buf.subarray(dataStart,dataStart+dataSize),sampleRate,channels};
 }
 
@@ -201,8 +195,6 @@ async function callHandler(call) {
     live=await connectLive();
     console.log('[CALL '+id+'] Gemini 3.8 Live ready');
 
-    // שלוחה 3: כל סבב מתחיל בהודעה, הקלטה מסתיימת ב-#,
-    // ואז התשובה מושמעת וחוזרים מיד להקלטה הבאה.
     for(let turn=0;turn<30;turn++){
       activeCalls.get(id).lastActivity=Date.now();
 
@@ -216,8 +208,6 @@ async function callHandler(call) {
         {
           min_length:1,
           max_length:30,
-          lenght_min:1,
-          lenght_max:30,
           no_confirm_menu:true,
           save_on_hangup:false
         }
