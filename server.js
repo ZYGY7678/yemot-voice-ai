@@ -158,39 +158,42 @@ async function connectLive() {
 }
 
 async function liveTurn(live, buf) {
-  const {pcm,sampleRate}=wavToPcm(buf);
+  const {pcm,sampleRate,channels}=wavToPcm(buf);
+  let audioPcm=pcm;
+  if(channels>1){
+    const frames=pcm.length/(2*channels);
+    const mono=Buffer.allocUnsafe(frames*2);
+    for(let i=0;i<frames;i++){
+      let sum=0;
+      for(let ch=0;ch<channels;ch++) sum+=pcm.readInt16LE((i*channels+ch)*2);
+      mono.writeInt16LE(Math.round(sum/channels),i*2);
+    }
+    audioPcm=mono;
+  }
+
   live.session.sendRealtimeInput({
     audio:{
-      data:pcm.toString('base64'),
+      data:audioPcm.toString('base64'),
       mimeType:'audio/pcm;rate='+sampleRate
     }
   });
   live.session.sendRealtimeInput({audioStreamEnd:true});
 
-  return await new Promise(async(resolve,reject)=>{
+  const result=await timeout((async()=>{
     let inputTranscript='';
     let outputTranscript='';
-    const timer=setTimeout(()=>reject(Object.assign(new Error('Timeout: Gemini 3.8 Live'),{status:408})),45000);
-    try {
-      while(true) {
-        const message=await Promise.race([
-          live.getMessage(),
-          new Promise((_,rej)=>setTimeout(()=>rej(Object.assign(new Error('Timeout: Gemini 3.8 Live'),{status:408})),45000))
-        ]);
-        const sc=message?.serverContent;
-        if(sc?.inputTranscription?.text) inputTranscript+=' '+sc.inputTranscription.text;
-        if(sc?.outputTranscription?.text) outputTranscript+=' '+sc.outputTranscription.text;
-        if(sc?.turnComplete) {
-          clearTimeout(timer);
-          resolve({transcript:clean(inputTranscript),reply:clean(outputTranscript)});
-          return;
-        }
+    while(true) {
+      const message=await live.getMessage();
+      const sc=message?.serverContent;
+      if(sc?.inputTranscription?.text) inputTranscript+=' '+sc.inputTranscription.text;
+      if(sc?.outputTranscription?.text) outputTranscript+=' '+sc.outputTranscription.text;
+      if(sc?.turnComplete) {
+        return {transcript:clean(inputTranscript),reply:clean(outputTranscript)};
       }
-    } catch(e) {
-      clearTimeout(timer);
-      reject(e);
     }
-  });
+  })(),45000,'Gemini 3.8 Live');
+
+  return result;
 }
 
 async function answerAudioLive(live, buf) {
@@ -209,15 +212,16 @@ async function callHandler(call) {
 
   let live;
   try {
-    await call.id_list_message([{type:'text',data:'שלום מה נשמע'}]);
+    const SILENT_RECORD_PROMPT=[{type:'text',data:'\u200B'}];
 
     for(let turn=0;turn<30;turn++){
       activeCalls.get(id).lastActivity=Date.now();
 
       const livePromise=live ? Promise.resolve(live) : connectLive();
 
+      const recordStarted=Date.now();
       const recPath=await call.read(
-        [],
+        turn===0 ? [{type:'text',data:'שלום מה נשמע'}] : SILENT_RECORD_PROMPT,
         'record',
         {
           min_length:1,
@@ -231,11 +235,15 @@ async function callHandler(call) {
 
       live=await livePromise;
       console.log('[CALL '+id+'] Gemini 3.8 Live ready');
-      console.log('[CALL '+id+'] recording='+recPath);
+      console.log('[CALL '+id+'] recording='+recPath+' record_ms='+(Date.now()-recordStarted));
 
-
+      const downloadStarted=Date.now();
       const audio=await downloadRecording(String(recPath));
+      console.log('[CALL '+id+'] download_ms='+(Date.now()-downloadStarted));
+
+      const aiStarted=Date.now();
       const result=await answerAudioLive(live,audio);
+      console.log('[CALL '+id+'] gemini_ms='+(Date.now()-aiStarted));
 
       conversations.push({
         phone:p,
@@ -255,10 +263,9 @@ async function callHandler(call) {
   } catch(e) {
     console.error('[CALL '+id+'] ERROR',e?.stack||e);
     try {
-      await call.id_list_message(
-        [{type:'text',data:'מצטער הייתה תקלה זמנית נסה שוב'}],
-        true
-      );
+      try {
+        call.id_list_message([{type:'text',data:'מצטער הייתה תקלה זמנית נסה שוב'}]);
+      } catch {}
     } catch {}
   } finally {
     try { live?.session?.close?.(); } catch {}
