@@ -39,7 +39,7 @@ async function disableYemotWaitMusic() {
       api_wait_answer_music_on_hold:'no',
       api_wait_answer_music_on_hold_different:'',
       api_record_beep:'no',
-      option_record:'1-1-1',
+      option_record:'1-1-30',
       api_timeout:'60',
       tts_rate:'2',
       rate:'2'
@@ -63,6 +63,9 @@ const router = YemotRouter({
 });
 
 const conversations = [];
+
+// Keep the dashboard useful across requests; transcripts are populated from Gemini where available.
+
 const activeCalls = new Map();
 
 function timeout(p, ms, label) {
@@ -304,7 +307,7 @@ async function callHandler(call) {
         'record',
         {
           min_length:1,
-          max_length:1,
+          max_length:30,
           no_confirm_menu:true,
           save_on_hangup:false
         }
@@ -320,6 +323,7 @@ async function callHandler(call) {
 
       const aiStarted=Date.now();
       const result=await answerAudioFile(audio,history);
+      console.log('[CALL '+id+'] AI result reply='+JSON.stringify(result.reply));
       console.log('[CALL '+id+'] gemini_ms='+(Date.now()-aiStarted));
 
       history.push({transcript:result.transcript,reply:result.reply});
