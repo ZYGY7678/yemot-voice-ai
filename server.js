@@ -25,18 +25,31 @@ const SYSTEM = [
 
 async function disableYemotWaitMusic() {
   const token=String(process.env.YEMOT_API_KEY||'').trim();
-  if(!token) return;
+  if(!token) {
+    console.error('[YEMOT_EXTENSION_1_CONFIG_FAIL] YEMOT_API_KEY missing');
+    return;
+  }
   try {
     const qs=new URLSearchParams({
       token,
       path:'ivr2:/1',
-      api_wait_answer_music_on_hold:'no',
-      api_wait_play:'no'
+      api_link:(process.env.PUBLIC_BASE_URL||'').replace(/\\/$/,'')+'/yemot',
+      api_wait:'yes',
+      api_wait_play:'yes',
+      api_wait_answer_music_on_hold:'yes',
+      api_wait_answer_music_on_hold_different:'M0000',
+      api_timeout:'60',
+      tts_rate:'2',
+      rate:'2'
     });
     const r=await fetch('https://www.call2all.co.il/ym/api/UpdateExtension?'+qs);
-    console.log('[YEMOT_EXTENSION_1_CONFIGURED]',r.status,await r.text());
+    const body=await r.text();
+    console.log('[YEMOT_EXTENSION_1_CONFIGURED]',r.status,body);
+    if(!r.ok || !body.includes('"responseStatus":"OK"')) {
+      console.error('[YEMOT_EXTENSION_1_CONFIG_FAIL]',body);
+    }
   } catch(e) {
-    console.error('[YEMOT_WAIT_MUSIC_CONFIG_FAIL]',e?.message||e);
+    console.error('[YEMOT_EXTENSION_1_CONFIG_FAIL]',e?.message||e);
   }
 }
 
