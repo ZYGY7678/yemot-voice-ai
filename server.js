@@ -196,81 +196,13 @@ async function callHandler(call) {
   activeCalls.set(id,{phone:p,callId:id,lastActivity:Date.now()});
   console.log('[CALL '+id+'] started phone='+p);
 
-  const history=[];
-  let liveSession=null;
-
   try {
-    liveSession=await connectLive();
-    let first=true;
-
-    while(true){
-      const msg=first
-        ? clean(process.env.WELCOME_MESSAGE||'שלום מדבר צחי במה אוכל לעזור?')
-        : 'אמור שאלה נוספת';
-      first=false;
-
-      console.log('[CALL '+id+'] waiting for recording');
-      const path=await call.read([{type:'text',data:msg}],'record',{
-        min_length:1,no_confirm_menu:true,max_length:30,lenght_max:30
-      });
-      console.log('[CALL '+id+'] recording path='+path);
-
-      if(!path||path==='None'){
-        return call.id_list_message([{type:'text',data:'תודה רבה ולהתראות'}]);
-      }
-
-      let buf;
-      try{
-        buf=await downloadRecording(path);
-        console.log('[CALL '+id+'] recording downloaded bytes='+(buf?.length||0));
-      }catch(e){
-        console.error('[CALL '+id+'] recording download failed',e);
-        await call.id_list_message([{type:'text',data:'תקלה בהורדת ההקלטה נסה שוב'}],{prependToNextAction:true});
-        continue;
-      }
-
-      if(!buf||buf.length<500){
-        await call.id_list_message([{type:'text',data:'לא שמעתי שאלה אנא נסה שוב'}],{prependToNextAction:true});
-        continue;
-      }
-
-      let out;
-      try{
-        out=await answerAudioLive(liveSession,buf);
-      }catch(e){
-        console.error('[CALL '+id+'] Gemini Live processing failed',e);
-        // Reconnect once for a transient WebSocket/API failure.
-        try{
-          liveSession?.close?.();
-          liveSession=await connectLive();
-          out=await answerAudioLive(liveSession,buf);
-        }catch(e2){
-          console.error('[CALL '+id+'] Gemini Live retry failed',e2);
-          out={
-            transcript:'הקלטה',
-            reply:e2?.status===408
-              ? 'מצטערים לקח יותר מדי זמן לענות נסה שוב'
-              : 'מצטער הייתה תקלה בעיבוד השאלה אפשר לנסות שוב'
-          };
-        }
-      }
-
-      out.reply=limitWords(clean(out.reply),80)||'מצטער לא הצלחתי לנסח תשובה נסה שוב';
-      history.push({user:out.transcript,reply:out.reply});
-      conversations.push({
-        time:new Date().toISOString(),phone:p,callId:id,
-        user:out.transcript,gemini:out.reply
-      });
-      if(conversations.length>1000) conversations.shift();
-
-      console.log('[CALL '+id+'] sending reply');
-      await call.id_list_message([{type:'text',data:out.reply}],{prependToNextAction:true});
-    }
-  }catch(e){
-    console.error('[CALL '+id+'] handler failed',e);
-    throw e;
-  }finally{
-    try{liveSession?.session?.close?.()}catch{}
+    const live=await connectLive();
+    console.log('[CALL '+id+'] Live session ready; awaiting true realtime audio bridge');
+    // Keep the Yemot HTTP call alive. Actual bidirectional streaming requires a
+    // Yemot media/WebSocket bridge; record mode is deliberately not used here.
+    await call.id_list_message([{type:'text',data:'החיבור החי מוכן'}]);
+  } finally {
     activeCalls.delete(id);
     console.log('[CALL '+id+'] ended');
   }
