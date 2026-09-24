@@ -19,7 +19,38 @@ function wordCount(t){return String(t||'').trim().split(/\s+/).filter(Boolean).l
 function limitWords(t,max=80){const s=String(t||'').trim();return s.split(/\s+/).filter(Boolean).slice(0,max).join(' ')}
 function callerPhone(c){return String(c?.values?.ApiPhone??c?.req?.query?.ApiPhone??c?.req?.body?.ApiPhone??'').trim()||'לא מזוהה'}
 async function downloadRecording(path){const p=path.startsWith('ivr2:')?path:'ivr2:'+path,token=String(process.env.YEMOT_API_KEY||'').trim();if(token){const u='https://www.call2all.co.il/ym/api/DownloadFile?token='+encodeURIComponent(token)+'&path='+encodeURIComponent(p),r=await timeout(fetch(u),REQUEST_TIMEOUT_MS,'download recording');if(!r.ok)throw new Error('DownloadFile HTTP '+r.status);return Buffer.from(await r.arrayBuffer())}if(process.env.YEMOT_API_USERNAME&&process.env.YEMOT_API_PASSWORD){const api=new YemotApi(process.env.YEMOT_API_USERNAME,process.env.YEMOT_API_PASSWORD),r=await timeout(api.download_file(p),REQUEST_TIMEOUT_MS,'download recording');return Buffer.isBuffer(r.data)?r.data:Buffer.from(r.data)}throw new Error('YEMOT credentials are missing')}
-async function answerAudio(buf,history){const audio={inlineData:{mimeType:process.env.YEMOT_AUDIO_MIME_TYPE||'audio/wav',data:buf.toString('base64')}},hist=history.length?'\nהיסטוריית שיחה:\n'+history.map((x,i)=>'סבב '+(i+1)+': מתקשר: '+x.user+' | AI: '+x.reply).join('\n'):'';const prompt=SYSTEM+hist+'\nקיבלת הקלטת קול של המתקשר. התמלול הוא השלב הראשון והחשוב ביותר. תמלל בדיוק את מה שנאמר בהקלטה בעברית מדוברת ישראלית. אל תנחש, אל תמציא, ואל תשתמש בהיסטוריית השיחה כדי לשנות את התמלול הנוכחי. אם מילה אינה ברורה, בחר לפי ההקשר של כל המשפט. לאחר התמלול, ענה ישירות על הבקשה שנאמרה. אל תענה על נושא שלא נאמר בהקלטה. ענה בשפת המתקשר, ללא Markdown. reply עד 50 מילים. החזר JSON בלבד: {"transcript":"התמלול המדויק","reply":"התשובה לבקשה"}. אם נדרש מידע עדכני באינטרנט, התחל את reply ב-SEARCH_REQUEST.';const r=await generate([audio,{text:prompt}]),raw=r.response.text().trim();try{const j=JSON.parse(raw);return{transcript:clean(j.transcript||'הקלטה'),reply:j.reply||''}}catch{return{transcript:'הקלטת קול',reply:raw}}}
+function parseJsonResponse(raw){
+  const text=String(raw||'').trim().replace(/^\`\`\`json\s*/i,'').replace(/^\`\`\`\s*/,'').replace(/\s*\`\`\`$/,'').trim();
+  try{return JSON.parse(text)}catch{}
+  const m=text.match(/\\{[\\s\\S]*\\}/);
+  if(m){try{return JSON.parse(m[0])}catch{}}
+  return null;
+}
+async function transcribeAudio(buf){
+  const audio={inlineData:{mimeType:process.env.YEMOT_AUDIO_MIME_TYPE||'audio/wav',data:buf.toString('base64')}};
+  const prompt='תמלל את ההקלטה בדיוק כפי שנאמרה. השפה העיקרית היא עברית מדוברת ישראלית. זהו תמלול בלבד, ללא תשובה וללא הסבר. אל תשלים מילים שלא נשמעו. אל תשתמש בהיסטוריית שיחה. שמור שמות, מספרים, מונחים ושאלות כפי שנאמרו. אם חלק אינו ברור, סמן [לא ברור] במקום להמציא. החזר JSON בלבד: {"transcript":"..."}';
+  const r=await generate([audio,{text:prompt}]);
+  const raw=r.response.text();
+  const j=parseJsonResponse(raw);
+  const transcript=clean(j?.transcript||raw);
+  if(!transcript||transcript==='הקלטה') throw new Error('Empty transcription');
+  return transcript;
+}
+async function answerText(transcript,history){
+  const hist=history.length?'\\nהיסטוריית שיחה קודמת (רק כדי להבין הקשר, לעולם לא לשנות את הטקסט שנאמר עכשיו):\\n'+history.map((x,i)=>'סבב '+(i+1)+': מתקשר: '+x.user+' | AI: '+x.reply).join('\\n'):'';
+  const prompt=SYSTEM+hist+'\\nהודעת המתקשר עכשיו היא:\\n'+transcript+'\\nענה ישירות לבקשה האחרונה בלבד. אל תנחש כוונה שלא מופיעה בטקסט. אם הבקשה לא ברורה, בקש הבהרה קצרה. ענה בעברית מדוברת וברורה, ללא Markdown, עד 50 מילים. החזר JSON בלבד: {"reply":"..."}';
+  const r=await generate([{text:prompt}]);
+  const raw=r.response.text();
+  const j=parseJsonResponse(raw);
+  return clean(j?.reply||raw);
+}
+async function answerAudio(buf,history){
+  const transcript=await transcribeAudio(buf);
+  console.log('[TRANSCRIPT]',JSON.stringify(transcript));
+  const reply=await answerText(transcript,history);
+  console.log('[AI_REPLY]',JSON.stringify(reply));
+  return {transcript,reply};
+}
 async function callHandler(call){const p=callerPhone(call),id=String(call?.callId||call?.values?.ApiCallId||Date.now()+'-'+p);activeCalls.set(id,{phone:p,callId:id,lastActivity:Date.now()});console.log(`[CALL ${id}] started phone=${p}`);const history=[];try{let first=true;while(true){const msg=first?clean(process.env.WELCOME_MESSAGE||'שלום מדבר צחי במה אוכל לעזור?'):'אמור שאלה נוספת ולסיום הקש סולמית או כוכבית ליציאה';first=false;console.log(`[CALL ${id}] waiting for recording`);const path=await call.read([{type:'text',data:msg}],'record',{min_length:1,no_confirm_menu:true,max_length:60});console.log(`[CALL ${id}] recording path=${path}`);if(!path||path==='None')return call.id_list_message([{type:'text',data:'תודה רבה ולהתראות'}]);let buf;try{buf=await downloadRecording(path);console.log(`[CALL ${id}] recording downloaded bytes=${buf?.length||0}`)}catch(e){console.error(`[CALL ${id}] recording download failed`,e);await call.id_list_message([{type:'text',data:'תקלה בהורדת ההקלטה נסה שוב'}],{prependToNextAction:true});continue}if(!buf||buf.length<500){await call.id_list_message([{type:'text',data:'לא שמעתי שאלה אנא נסה שוב'}],{prependToNextAction:true});continue}let out;try{out=await answerAudio(buf,history);console.log(`[CALL ${id}] Gemini reply ready transcript=${JSON.stringify(out.transcript)}`);if(out.reply.startsWith('SEARCH_REQUEST')){const r=await generate([{inlineData:{mimeType:process.env.YEMOT_AUDIO_MIME_TYPE||'audio/wav',data:buf.toString('base64')}},{text:SYSTEM+'\nחפש מידע עדכני באינטרנט בנושא: '+out.reply.replace('SEARCH_REQUEST','')+'\nענה קצר וברור בעברית.'}],true);out.reply=r.response.text()}}catch(e){console.error(`[CALL ${id}] Gemini processing failed`,e);out={transcript:'הקלטה',reply:e.status===429?'מצטערים אני עמוס כרגע נסה שוב עוד מעט':e.status===408?'מצטערים לקח יותר מדי זמן לענות נסה שוב':'מצטער הייתה תקלה בעיבוד השאלה אפשר לנסות שוב'}}out.reply=limitWords(clean(out.reply),80)||'מצטער לא הצלחתי לנסח תשובה נסה שוב';history.push({user:out.transcript,reply:out.reply});conversations.push({time:new Date().toISOString(),phone:p,callId:id,user:out.transcript,gemini:out.reply});if(conversations.length>1000)conversations.shift();console.log(`[CALL ${id}] sending reply`);await call.id_list_message([{type:'text',data:out.reply}],{prependToNextAction:true})}}catch(e){console.error(`[CALL ${id}] handler failed`,e);throw e}finally{activeCalls.delete(id);console.log(`[CALL ${id}] ended`)}}
 router.all('/yemot',callHandler);app.use('/',router);
 function auth(req,res,next){if((req.headers['x-dashboard-key']||req.query.key)!==DASHBOARD_PASSWORD)return res.status(401).json({ok:false});next()}
