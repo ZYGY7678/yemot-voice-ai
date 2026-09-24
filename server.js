@@ -170,12 +170,12 @@ async function liveTurn(live, buf) {
   return await new Promise(async(resolve,reject)=>{
     let inputTranscript='';
     let outputTranscript='';
-    const timer=setTimeout(()=>reject(Object.assign(new Error('Timeout: Gemini 3.8 Live'),{status:408})),25000);
+    const timer=setTimeout(()=>reject(Object.assign(new Error('Timeout: Gemini 3.8 Live'),{status:408})),45000);
     try {
       while(true) {
         const message=await Promise.race([
           live.getMessage(),
-          new Promise((_,rej)=>setTimeout(()=>rej(Object.assign(new Error('Timeout: Gemini 3.8 Live'),{status:408})),25000))
+          new Promise((_,rej)=>setTimeout(()=>rej(Object.assign(new Error('Timeout: Gemini 3.8 Live'),{status:408})),45000))
         ]);
         const sc=message?.serverContent;
         if(sc?.inputTranscription?.text) inputTranscript+=' '+sc.inputTranscription.text;
@@ -209,12 +209,15 @@ async function callHandler(call) {
 
   let live;
   try {
+    await call.id_list_message([{type:'text',data:'שלום מה נשמע'}]);
+
     for(let turn=0;turn<30;turn++){
       activeCalls.get(id).lastActivity=Date.now();
 
-      // Speak the greeting and start recording before doing any Gemini network work.
+      const livePromise=live ? Promise.resolve(live) : connectLive();
+
       const recPath=await call.read(
-        [{type:'text',data:'שלום מה נשמע'}],
+        [],
         'record',
         {
           min_length:1,
@@ -226,11 +229,10 @@ async function callHandler(call) {
 
       if(!recPath) break;
 
-      if(!live){
-        live=await connectLive();
-        console.log('[CALL '+id+'] Gemini 3.8 Live ready');
-      }
+      live=await livePromise;
+      console.log('[CALL '+id+'] Gemini 3.8 Live ready');
       console.log('[CALL '+id+'] recording='+recPath);
+
 
       const audio=await downloadRecording(String(recPath));
       const result=await answerAudioLive(live,audio);
