@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: ai-phone-line
+    name: ai-phone-line-branch3
     runtime: node
     plan: free
     buildCommand: npm install
@@ -17,7 +17,7 @@ services:
       - key: MODEL_COOLDOWN_MS
         value: "3600000"
       - key: DASHBOARD_PASSWORD
-        value: "1234"
+        sync: false
       - key: REQUEST_TIMEOUT_MS
         value: "55000"
       - key: PER_MODEL_TIMEOUT_MS
