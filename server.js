@@ -299,6 +299,13 @@ async function callHandler(call) {
     for(let turn=0;turn<30;turn++){
       activeCalls.get(id).lastActivity=Date.now();
 
+      if(turn===0){
+        await call.id_list_message(
+          [{type:'text',data:'מה קורה גבר גבר, אליי אני שומע'}],
+          {prependToNextAction:true}
+        );
+      }
+
       const recordStarted=Date.now();
       // אין תשובת פתיחה מקומית — ההקלטה נשלחת ישירות ל-Gemini.
       const recordPrompt = SILENT_RECORD_PROMPT;
