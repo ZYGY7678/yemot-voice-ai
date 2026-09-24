@@ -33,7 +33,7 @@ async function disableYemotWaitMusic() {
     const qs=new URLSearchParams({
       token,
       path:'ivr2:/1',
-      api_link:(process.env.PUBLIC_BASE_URL||'').replace(/\\/$/,'')+'/yemot',
+      api_link:(process.env.PUBLIC_BASE_URL||'').replace(/\/+$/,'')+'/yemot',
       api_wait:'yes',
       api_wait_play:'yes',
       api_wait_answer_music_on_hold:'yes',
