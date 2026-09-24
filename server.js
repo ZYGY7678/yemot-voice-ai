@@ -5,8 +5,8 @@ import YemotApi from 'yemot-api';
 if (process.loadEnvFile) { try { process.loadEnvFile(); } catch {} }
 const app=express(); app.use(express.urlencoded({extended:true})); app.use(express.json());
 const apiKeys=(process.env.GEMINI_API_KEYS||process.env.GEMINI_API_KEY||'').split(',').map(x=>x.trim()).filter(Boolean);
-const MODEL_NAMES=(process.env.GEMINI_MODELS||'gemini-3.8-flash,gemini-3.5-flash-lite,gemini-3.6-flash,gemini-2.5-flash-lite').split(',').map(x=>x.trim()).filter(Boolean);
-const REQUEST_TIMEOUT_MS=Number(process.env.REQUEST_TIMEOUT_MS||55000),PER_MODEL_TIMEOUT_MS=Number(process.env.PER_MODEL_TIMEOUT_MS||12000),COOLDOWN_MS=Number(process.env.MODEL_COOLDOWN_MS||3600000),DASHBOARD_PASSWORD=String(process.env.DASHBOARD_PASSWORD||'1234');
+const MODEL_NAMES=(process.env.GEMINI_MODELS||'gemini-3.5-flash-lite,gemini-3.5-flash,gemini-3.8-flash,gemini-3.1-flash-lite').split(',').map(x=>x.trim()).filter(Boolean);
+const REQUEST_TIMEOUT_MS=Number(process.env.REQUEST_TIMEOUT_MS||55000),PER_MODEL_TIMEOUT_MS=Number(process.env.PER_MODEL_TIMEOUT_MS||18000),COOLDOWN_MS=Number(process.env.MODEL_COOLDOWN_MS||3600000),DASHBOARD_PASSWORD=String(process.env.DASHBOARD_PASSWORD||'1234');
 const FILTER='';
 const SYSTEM=[FILTER,process.env.AI_SYSTEM_INSTRUCTION||''].filter(Boolean).join('\n\n');
 const clients=apiKeys.map(k=>new GoogleGenerativeAI(k)),models=MODEL_NAMES.map(n=>clients.map(c=>c.getGenerativeModel({model:n}))),webModels=MODEL_NAMES.map(n=>clients.map(c=>c.getGenerativeModel({model:n,tools:[{googleSearch:{}}]})));
