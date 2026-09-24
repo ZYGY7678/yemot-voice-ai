@@ -13,7 +13,7 @@ const apiKeys = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || ''
   .split(',').map(x => x.trim()).filter(Boolean);
 
 const LIVE_MODEL = 'gemini-3.8-live';
-const AUDIO_MODELS = ['gemini-2.5-flash','gemini-2.5-flash-lite'];
+const AUDIO_MODELS = ['gemini-3.6-flash','gemini-3.5-flash-lite'];
 const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 55000);
 const DASHBOARD_PASSWORD = String(process.env.DASHBOARD_PASSWORD || '1234');
 const SYSTEM = [
