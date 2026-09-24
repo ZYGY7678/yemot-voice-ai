@@ -13,7 +13,7 @@ const apiKeys = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || ''
   .split(',').map(x => x.trim()).filter(Boolean);
 
 const LIVE_MODEL = 'gemini-3.8-live';
-const AUDIO_MODEL = 'gemini-3.8-flash';
+const AUDIO_MODELS = ['gemini-2.5-flash','gemini-2.5-flash-lite'];
 const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 55000);
 const DASHBOARD_PASSWORD = String(process.env.DASHBOARD_PASSWORD || '1234');
 const SYSTEM = [
@@ -230,28 +230,31 @@ async function liveTurn(live, buf) {
 async function answerAudioFile(buf, history=[]) {
   let last;
   for (const apiKey of apiKeys) {
-    try {
-      const ai = new GoogleGenAI({apiKey});
-      const context = history.length
-        ? 'המשך השיחה הקודמת:\n' + history.map(x => 'מתקשר: ' + x.transcript + '\nעוזר: ' + x.reply).join('\n')
-        : '';
-      const response = await timeout(ai.models.generateContent({
-        model:AUDIO_MODEL,
-        contents:[{
-          role:'user',
-          parts:[
-            {text:[SYSTEM, context, 'ענה עכשיו על מה שהמתקשר אמר בהקלטה. ענה בעברית מדוברת וקצרה.'].filter(Boolean).join('\n\n')},
-            {inlineData:{mimeType:'audio/wav',data:buf.toString('base64')}}
-          ]
-        }],
-        config:{thinkingConfig:{thinkingLevel:'low'}}
-      }),15000,'Gemini audio response');
-      const reply=clean(response?.text||'');
-      if(!reply) throw new Error('Empty Gemini response');
-      return {transcript:'',reply};
-    } catch(e) {
-      last=e;
-      console.error('[GEMINI_AUDIO_FAIL]',String(e?.message||e));
+    const ai = new GoogleGenAI({apiKey});
+    for (const model of AUDIO_MODELS) {
+      try {
+        const context = history.length
+          ? 'המשך השיחה הקודמת:\n' + history.map(x => 'מתקשר: ' + x.transcript + '\nעוזר: ' + x.reply).join('\n')
+          : '';
+        const response = await timeout(ai.models.generateContent({
+          model,
+          contents:[{
+            role:'user',
+            parts:[
+              {text:[SYSTEM, context, 'הקשב להקלטה המצורפת. תחילה הבן מה המתקשר אמר, ואז ענה ישירות בעברית מדוברת וקצרה. החזר רק את התשובה להקראה בטלפון.'].filter(Boolean).join('\n\n')},
+              {inlineData:{mimeType:'audio/wav',data:buf.toString('base64')}}
+            ]
+          }],
+          config:{thinkingConfig:{thinkingLevel:'low'}}
+        }),12000,'Gemini audio response '+model);
+        const reply=clean(response?.text||'');
+        if(!reply) throw new Error('Empty Gemini response');
+        console.log('[GEMINI_AUDIO_OK]',model);
+        return {transcript:'',reply};
+      } catch(e) {
+        last=e;
+        console.error('[GEMINI_AUDIO_FAIL]',model,String(e?.message||e));
+      }
     }
   }
   throw last || new Error('No Gemini API key available');
@@ -278,13 +281,12 @@ async function callHandler(call) {
     for(let turn=0;turn<30;turn++){
       activeCalls.get(id).lastActivity=Date.now();
 
-      if(turn===0){
-        await call.id_list_message([{type:'text',data:'שלום, מה נשמע? כאן צחי, אפשר לשאול שאלה אחרי הצפצוף, ובסיום להקיש סולמית'}], {prependToNextAction:true});
-      }
-
       const recordStarted=Date.now();
+      const recordPrompt = turn===0
+        ? [{type:'text',data:'שלום, מה נשמע? כאן צחי, אפשר לשאול שאלה אחרי הצפצוף, ובסיום להקיש סולמית'}]
+        : SILENT_RECORD_PROMPT;
       const recPath=await call.read(
-        SILENT_RECORD_PROMPT,
+        recordPrompt,
         'record',
         {
           min_length:1,
