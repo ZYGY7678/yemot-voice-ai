@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import fs from 'fs';
 import path from 'path';
-const args=process.argv.slice(2),token=(args[0]||process.env.YEMOT_API_KEY||'').trim(),publicUrl=((args[1]||process.env.PUBLIC_BASE_URL||'').trim()).replace(/\/$/,'')||'',extNumber=(args[2]||'1').trim();
+const args=process.argv.slice(2),token=(args[0]||process.env.YEMOT_API_KEY||'').trim(),publicUrl=((args[1]||process.env.PUBLIC_BASE_URL||'').trim()).replace(/\/$/,'')||'',extNumber=(args[2]||'3').trim();
 if(!token||!publicUrl){console.log('Usage: node auto_setup_yemot.js <YEMOT_TOKEN> <RENDER_URL> [EXTENSION_NUMBER]');process.exit(1)}
 const BASE_URL='https://www.call2all.co.il/ym/api';
 async function apiRequest(endpoint,params={}){const qs=new URLSearchParams({token,...params}),r=await fetch(BASE_URL+'/'+endpoint+'?'+qs),t=await r.text();try{return JSON.parse(t)}catch{return{raw:t}}}
