@@ -201,7 +201,7 @@ async function callHandler(call) {
     live=await connectLive();
     console.log('[CALL '+id+'] Gemini 3.8 Live ready');
 
-    await call.id_list_message([{type:'text',data:'שלום אני כאן אפשר לדבר אחרי שסיימת לדבר הקש סולמית'}],true);
+    await call.id_list_message([{type:'text',data:'שלום אני כאן אפשר לדבר אחרי שסיימת לדבר הקש סולמית'}], {});
 
     // Each turn is ended explicitly by the caller with #.
     // Yemot's record mode receives the recording only after the caller
