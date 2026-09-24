@@ -13,6 +13,7 @@ const apiKeys = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || ''
   .split(',').map(x => x.trim()).filter(Boolean);
 
 const LIVE_MODEL = 'gemini-3.8-live';
+const AUDIO_MODEL = 'gemini-3.8-flash';
 const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 55000);
 const DASHBOARD_PASSWORD = String(process.env.DASHBOARD_PASSWORD || '1234');
 const SYSTEM = [
@@ -226,6 +227,36 @@ async function liveTurn(live, buf) {
   return result;
 }
 
+async function answerAudioFile(buf, history=[]) {
+  let last;
+  for (const apiKey of apiKeys) {
+    try {
+      const ai = new GoogleGenAI({apiKey});
+      const context = history.length
+        ? 'המשך השיחה הקודמת:\n' + history.map(x => 'מתקשר: ' + x.transcript + '\nעוזר: ' + x.reply).join('\n')
+        : '';
+      const response = await timeout(ai.models.generateContent({
+        model:AUDIO_MODEL,
+        contents:[{
+          role:'user',
+          parts:[
+            {text:[SYSTEM, context, 'ענה עכשיו על מה שהמתקשר אמר בהקלטה. ענה בעברית מדוברת וקצרה.'].filter(Boolean).join('\n\n')},
+            {inlineData:{mimeType:'audio/wav',data:buf.toString('base64')}}
+          ]
+        }],
+        config:{thinkingConfig:{thinkingLevel:'low'}}
+      }),15000,'Gemini audio response');
+      const reply=clean(response?.text||'');
+      if(!reply) throw new Error('Empty Gemini response');
+      return {transcript:'',reply};
+    } catch(e) {
+      last=e;
+      console.error('[GEMINI_AUDIO_FAIL]',String(e?.message||e));
+    }
+  }
+  throw last || new Error('No Gemini API key available');
+}
+
 async function answerAudioLive(live, buf) {
   const out=await liveTurn(live,buf);
   console.log('[TRANSCRIPT]',JSON.stringify(out.transcript));
@@ -240,14 +271,12 @@ async function callHandler(call) {
   activeCalls.set(id,{phone:p,callId:id,lastActivity:Date.now()});
   console.log('[CALL '+id+'] started phone='+p);
 
-  let live;
+  const history=[];
   try {
     const SILENT_RECORD_PROMPT=[{type:'text',data:'\u200B'}];
 
     for(let turn=0;turn<30;turn++){
       activeCalls.get(id).lastActivity=Date.now();
-
-      const livePromise=live ? Promise.resolve(live) : connectLive();
 
       if(turn===0){
         await call.id_list_message([{type:'text',data:'שלום, מה נשמע? כאן צחי, אפשר לשאול שאלה אחרי הצפצוף, ובסיום להקיש סולמית'}], {prependToNextAction:true});
@@ -267,8 +296,6 @@ async function callHandler(call) {
 
       if(!recPath) break;
 
-      live=await livePromise;
-      console.log('[CALL '+id+'] Gemini 3.8 Live ready');
       console.log('[CALL '+id+'] recording='+recPath+' record_ms='+(Date.now()-recordStarted));
 
       const downloadStarted=Date.now();
@@ -276,9 +303,10 @@ async function callHandler(call) {
       console.log('[CALL '+id+'] download_ms='+(Date.now()-downloadStarted));
 
       const aiStarted=Date.now();
-      const result=await answerAudioLive(live,audio);
+      const result=await answerAudioFile(audio,history);
       console.log('[CALL '+id+'] gemini_ms='+(Date.now()-aiStarted));
 
+      history.push({transcript:result.transcript,reply:result.reply});
       conversations.push({
         phone:p,
         callId:id,
@@ -302,7 +330,6 @@ async function callHandler(call) {
       } catch {}
     } catch {}
   } finally {
-    try { live?.session?.close?.(); } catch {}
     activeCalls.delete(id);
     console.log('[CALL '+id+'] ended');
   }
