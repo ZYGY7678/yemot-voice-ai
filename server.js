@@ -201,23 +201,25 @@ async function callHandler(call) {
     live=await connectLive();
     console.log('[CALL '+id+'] Gemini 3.8 Live ready');
 
-    await call.id_list_message([{type:'text',data:'שלום, אני כאן. אפשר לדבר.'}],{prependToNextAction:true});
+    await call.id_list_message([{type:'text',data:'שלום, אני כאן. אפשר לדבר. אחרי שסיימת לדבר, הקש סולמית.'}],{prependToNextAction:true});
 
-    // Yemot currently supplies recordings as files, so use one short recording
-    // per conversational turn. No hash/keypad confirmation is requested.
+    // Each turn is ended explicitly by the caller with #.
+    // Yemot's record mode receives the recording only after the caller
+    // finishes it with the keypad confirmation.
     for(let turn=0;turn<30;turn++){
       activeCalls.get(id).lastActivity=Date.now();
 
       const recPath=await call.read(
-        [{type:'text',data:' '}],
+        [{type:'text',data:'אחרי שסיימת לדבר, הקש סולמית.'}],
         'record',
         {
           min_length:1,
           max_length:30,
           lenght_min:1,
           lenght_max:30,
-          no_confirm_menu:true,
-          save_on_hangup:true
+          no_confirm_menu:false,
+          record_ok:true,
+          record_hangup:false
         }
       );
 
