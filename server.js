@@ -97,6 +97,7 @@ function wavToPcm(buf) {
   if (buf.toString('ascii',0,4)!=='RIFF' || buf.toString('ascii',8,12)!=='WAVE') {
     throw new Error('Recording is not WAV');
   }
+
   let pos=12, audioFormat=null, channels=null, sampleRate=null, bits=null, dataStart=null, dataSize=null;
   while(pos+8<=buf.length){
     const id=buf.toString('ascii',pos,pos+4);
@@ -117,7 +118,39 @@ function wavToPcm(buf) {
   if(audioFormat!==1 || !channels || !sampleRate || bits!==16 || dataStart==null){
     throw new Error('WAV must contain PCM 16-bit audio');
   }
-  return {pcm:buf.subarray(dataStart,dataStart+dataSize),sampleRate,channels};
+
+  const src=buf.subarray(dataStart,dataStart+dataSize);
+  const frames=src.length/(2*channels);
+  if(!Number.isInteger(frames) || frames<1) throw new Error('WAV contains no PCM frames');
+
+  const mono=Buffer.allocUnsafe(frames*2);
+  for(let i=0;i<frames;i++){
+    let sum=0;
+    for(let ch=0;ch<channels;ch++) sum+=src.readInt16LE((i*channels+ch)*2);
+    mono.writeInt16LE(Math.round(sum/channels),i*2);
+  }
+
+  const targetRate=16000;
+  if(sampleRate===targetRate) return {pcm:mono,sampleRate:targetRate};
+
+  const outFrames=Math.max(1,Math.round(frames*targetRate/sampleRate));
+  const out=Buffer.allocUnsafe(outFrames*2);
+  if(outFrames===1){
+    out.writeInt16LE(mono.readInt16LE(0),0);
+    return {pcm:out,sampleRate:targetRate};
+  }
+
+  const scale=(frames-1)/(outFrames-1);
+  for(let i=0;i<outFrames;i++){
+    const srcPos=i*scale;
+    const left=Math.floor(srcPos);
+    const right=Math.min(left+1,frames-1);
+    const frac=srcPos-left;
+    const a=mono.readInt16LE(left*2);
+    const b=mono.readInt16LE(right*2);
+    out.writeInt16LE(Math.max(-32768,Math.min(32767,Math.round(a+(b-a)*frac))),i*2);
+  }
+  return {pcm:out,sampleRate:targetRate};
 }
 
 async function connectLive() {
@@ -158,22 +191,11 @@ async function connectLive() {
 }
 
 async function liveTurn(live, buf) {
-  const {pcm,sampleRate,channels}=wavToPcm(buf);
-  let audioPcm=pcm;
-  if(channels>1){
-    const frames=pcm.length/(2*channels);
-    const mono=Buffer.allocUnsafe(frames*2);
-    for(let i=0;i<frames;i++){
-      let sum=0;
-      for(let ch=0;ch<channels;ch++) sum+=pcm.readInt16LE((i*channels+ch)*2);
-      mono.writeInt16LE(Math.round(sum/channels),i*2);
-    }
-    audioPcm=mono;
-  }
+  const {pcm,sampleRate}=wavToPcm(buf);
 
   live.session.sendRealtimeInput({
     audio:{
-      data:audioPcm.toString('base64'),
+      data:pcm.toString('base64'),
       mimeType:'audio/pcm;rate='+sampleRate
     }
   });
