@@ -36,8 +36,9 @@ async function disableYemotWaitMusic() {
       api_link:(process.env.PUBLIC_BASE_URL||'').replace(/\/+$/,'')+'/yemot',
       api_wait:'yes',
       api_wait_play:'yes',
-      api_wait_answer_music_on_hold:'yes',
-      api_wait_answer_music_on_hold_different:'M0000',
+      api_wait_answer_music_on_hold:'no',
+      api_wait_answer_music_on_hold_different:'',
+      option_record:'2-1-30',
       api_timeout:'60',
       tts_rate:'2',
       rate:'2'
