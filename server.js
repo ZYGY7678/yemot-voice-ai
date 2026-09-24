@@ -206,12 +206,12 @@ async function callHandler(call) {
     while(true){
       const msg=first
         ? clean(process.env.WELCOME_MESSAGE||'שלום מדבר צחי במה אוכל לעזור?')
-        : 'אמור שאלה נוספת ולסיום הקש סולמית או כוכבית ליציאה';
+        : 'אמור שאלה נוספת';
       first=false;
 
       console.log('[CALL '+id+'] waiting for recording');
       const path=await call.read([{type:'text',data:msg}],'record',{
-        min_length:1,no_confirm_menu:true,max_length:60
+        min_length:1,no_confirm_menu:true,max_length:30,lenght_max:30
       });
       console.log('[CALL '+id+'] recording path='+path);
 
