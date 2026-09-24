@@ -35,6 +35,17 @@ async function disableYemotWaitMusic() {
     });
     const r=await fetch('https://www.call2all.co.il/ym/api/UpdateExtension?'+qs);
     console.log('[YEMOT_WAIT_MUSIC_DISABLED]',r.status,await r.text());
+
+    // שלוחה 2: קול TTS שונה לגמרי מהקול הקודם.
+    // ימות המשיח מתעדת את Jacob כקול גברי נפרד.
+    const voiceQs=new URLSearchParams({
+      token,
+      path:'ivr2:/2',
+      voice:'Jacob',
+      tts_voice:'Jacob'
+    });
+    const vr=await fetch('https://www.call2all.co.il/ym/api/UpdateExtension?'+voiceQs);
+    console.log('[YEMOT_EXTENSION_2_VOICE_JACOB]',vr.status,await vr.text());
   } catch(e) {
     console.error('[YEMOT_WAIT_MUSIC_CONFIG_FAIL]',e?.message||e);
   }
