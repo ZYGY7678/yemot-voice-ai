@@ -195,15 +195,17 @@ async function callHandler(call) {
     live=await connectLive();
     console.log('[CALL '+id+'] Gemini 3.8 Live ready');
 
+    // Speak immediately, before waiting for the caller's recording.
+    await call.id_list_message(
+      [{type:'text',data:'שלום מה נשמע'}],
+      {prependToNextAction:true}
+    );
+
     for(let turn=0;turn<30;turn++){
       activeCalls.get(id).lastActivity=Date.now();
 
-      const prompt = turn === 0
-        ? 'שלום מה נשמע אחרי שסיימת לדבר הקש סולמית'
-        : 'אפשר להמשיך לדבר אחרי שסיימת הקש סולמית';
-
       const recPath=await call.read(
-        [{type:'text',data:prompt}],
+        [],
         'record',
         {
           min_length:1,
