@@ -250,7 +250,7 @@ async function callHandler(call) {
       const livePromise=live ? Promise.resolve(live) : connectLive();
 
       if(turn===0){
-        await call.id_list_message([{type:'text',data:'שלום מה נשמע כאן צחי אפשר לשאול שאלה אחרי הצפצוף ובסיום להקיש סולמית'}], {prependToNextAction:true});
+        await call.id_list_message([{type:'text',data:'שלום, מה נשמע? כאן צחי, אפשר לשאול שאלה אחרי הצפצוף, ובסיום להקיש סולמית'}], {prependToNextAction:true});
       }
 
       const recordStarted=Date.now();
