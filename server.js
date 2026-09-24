@@ -246,7 +246,7 @@ async function answerAudioFile(buf, history=[]) {
             ]
           }],
           config:{thinkingConfig:{thinkingLevel:'low'}}
-        }),12000,'Gemini audio response '+model);
+        }),20000,'Gemini audio response '+model);
         const reply=clean(response?.text||'');
         if(!reply) throw new Error('Empty Gemini response');
         console.log('[GEMINI_AUDIO_OK]',model);
