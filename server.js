@@ -192,28 +192,36 @@ async function connectLive() {
 
 async function liveTurn(live, buf) {
   const {pcm,sampleRate}=wavToPcm(buf);
+  const chunkBytes=Math.max(2048, Math.round(sampleRate*2*0.1));
 
-  live.session.sendRealtimeInput({
-    audio:{
-      data:pcm.toString('base64'),
-      mimeType:'audio/pcm;rate='+sampleRate
-    }
-  });
+  // Feed the recording as short realtime chunks, matching Google's Live API guidance.
+  // A single giant chunk can delay/stall turn detection with prerecorded files.
+  for(let offset=0; offset<pcm.length; offset+=chunkBytes){
+    const chunk=pcm.subarray(offset, Math.min(offset+chunkBytes, pcm.length));
+    live.session.sendRealtimeInput({
+      audio:{
+        data:chunk.toString('base64'),
+        mimeType:'audio/pcm;rate='+sampleRate
+      }
+    });
+  }
   live.session.sendRealtimeInput({audioStreamEnd:true});
 
   const result=await timeout((async()=>{
     let inputTranscript='';
     let outputTranscript='';
+    let seenModelTurn=false;
     while(true) {
       const message=await live.getMessage();
       const sc=message?.serverContent;
       if(sc?.inputTranscription?.text) inputTranscript+=' '+sc.inputTranscription.text;
       if(sc?.outputTranscription?.text) outputTranscript+=' '+sc.outputTranscription.text;
+      if(sc?.modelTurn) seenModelTurn=true;
       if(sc?.turnComplete) {
-        return {transcript:clean(inputTranscript),reply:clean(outputTranscript)};
+        return {transcript:clean(inputTranscript),reply:clean(outputTranscript),seenModelTurn};
       }
     }
-  })(),45000,'Gemini 3.8 Live');
+  })(),20000,'Gemini 3.8 Live');
 
   return result;
 }
@@ -241,9 +249,13 @@ async function callHandler(call) {
 
       const livePromise=live ? Promise.resolve(live) : connectLive();
 
+      if(turn===0){
+        await call.id_list_message([{type:'text',data:'שלום מה נשמע'}], {prependToNextAction:true});
+      }
+
       const recordStarted=Date.now();
       const recPath=await call.read(
-        turn===0 ? [{type:'text',data:'שלום מה נשמע'}] : SILENT_RECORD_PROMPT,
+        SILENT_RECORD_PROMPT,
         'record',
         {
           min_length:1,
