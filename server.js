@@ -170,12 +170,12 @@ async function liveTurn(live, buf) {
   return await new Promise(async(resolve,reject)=>{
     let inputTranscript='';
     let outputTranscript='';
-    const timer=setTimeout(()=>reject(Object.assign(new Error('Timeout: Gemini 3.8 Live'),{status:408})),45000);
+    const timer=setTimeout(()=>reject(Object.assign(new Error('Timeout: Gemini 3.8 Live'),{status:408})),12000);
     try {
       while(true) {
         const message=await Promise.race([
           live.getMessage(),
-          new Promise((_,rej)=>setTimeout(()=>rej(Object.assign(new Error('Timeout: Gemini 3.8 Live'),{status:408})),45000))
+          new Promise((_,rej)=>setTimeout(()=>rej(Object.assign(new Error('Timeout: Gemini 3.8 Live'),{status:408})),12000))
         ]);
         const sc=message?.serverContent;
         if(sc?.inputTranscription?.text) inputTranscript+=' '+sc.inputTranscription.text;
