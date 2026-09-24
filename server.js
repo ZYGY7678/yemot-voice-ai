@@ -195,10 +195,7 @@ async function callHandler(call) {
     for(let turn=0;turn<30;turn++){
       activeCalls.get(id).lastActivity=Date.now();
 
-      // Put the greeting directly on the recording action so Yemot speaks it immediately.
-      // Start Gemini connection in parallel while the caller is recording.
-      const livePromise = live ? Promise.resolve(live) : connectLive();
-
+      // Speak the greeting and start recording before doing any Gemini network work.
       const recPath=await call.read(
         [{type:'text',data:'שלום מה נשמע'}],
         'record',
@@ -210,10 +207,12 @@ async function callHandler(call) {
         }
       );
 
-      live = await livePromise;
-      console.log('[CALL '+id+'] Gemini 3.8 Live ready');
-
       if(!recPath) break;
+
+      if(!live){
+        live=await connectLive();
+        console.log('[CALL '+id+'] Gemini 3.8 Live ready');
+      }
       console.log('[CALL '+id+'] recording='+recPath);
 
       const audio=await downloadRecording(String(recPath));
