@@ -7,7 +7,7 @@ const app=express(); app.use(express.urlencoded({extended:true})); app.use(expre
 const apiKeys=(process.env.GEMINI_API_KEYS||process.env.GEMINI_API_KEY||'').split(',').map(x=>x.trim()).filter(Boolean);
 const MODEL_NAMES=(process.env.GEMINI_MODELS||'gemini-3-flash-preview,gemini-3.8-flash,gemini-3.6-flash,gemini-3.5-flash,gemini-3.5-flash-lite').split(',').map(x=>x.trim()).filter(Boolean);
 const REQUEST_TIMEOUT_MS=Number(process.env.REQUEST_TIMEOUT_MS||55000),PER_MODEL_TIMEOUT_MS=Number(process.env.PER_MODEL_TIMEOUT_MS||20000),COOLDOWN_MS=Number(process.env.MODEL_COOLDOWN_MS||3600000),DASHBOARD_PASSWORD=String(process.env.DASHBOARD_PASSWORD||'1234');
-const FILTER='כלל סינון: אין לספק תוכן מיני או אירוטי, פורנוגרפיה, עירום מיני, אלימות גרפית, סמים, הימורים או פגיעה עצמית. אם השאלה דורשת תוכן אסור החזר בדיוק: היי עצור הקו מסונן ולא ניתן לדבר איתו על תוכן שאינו מתאים לערכי הצניעות והחינוך';
+const FILTER='כלל סינון מצומצם: אין לספק פורנוגרפיה או תוכן מיני מפורש. שאלות כלליות, חינוכיות, רפואיות או אינפורמטיביות שאינן מבקשות תוכן מיני מפורש מותרות. אין לחסום שיחה רגילה רק בגלל מילה או נושא שעשויים להופיע בהקשר תמים.';
 const SYSTEM=[FILTER,process.env.AI_SYSTEM_INSTRUCTION||''].filter(Boolean).join('\n\n');
 const clients=apiKeys.map(k=>new GoogleGenerativeAI(k)),models=MODEL_NAMES.map(n=>clients.map(c=>c.getGenerativeModel({model:n}))),webModels=MODEL_NAMES.map(n=>clients.map(c=>c.getGenerativeModel({model:n,tools:[{googleSearch:{}}]})));
 const cooldowns=new Map(),conversations=[],activeCalls=new Map();
