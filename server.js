@@ -300,8 +300,32 @@ async function callHandler(call) {
       activeCalls.get(id).lastActivity=Date.now();
 
       if(turn===0){
+        const previousContext=history.length
+          ? history.map(x=>'מתקשר: '+x.transcript+'\\nעוזר: '+x.reply).join('\\n')
+          : '';
+        let opening='מה קורה גבר, אני איתך. מה קורה?';
+        try{
+          const ai=new GoogleGenAI({apiKey:apiKeys[0]});
+          const prompt=[
+            SYSTEM,
+            'זהו פתיח לשיחה טלפונית. צור משפט פתיחה קצר, טבעי, חברי ולא רשמי בעברית מדוברת.',
+            previousContext
+              ? 'יש הקשר מהשיחה הקודמת. התייחס אליו בעדינות ובאופן טבעי, בלי להמציא פרטים:\\n'+previousContext
+              : 'אין שיחה קודמת זמינה, לכן פתח בברכה טבעית וקצרה.',
+            'החזר רק את משפט הפתיחה להקראה בטלפון, בלי הסברים ובלי מרכאות.'
+          ].join('\\n\\n');
+          const response=await timeout(ai.models.generateContent({
+            model:AUDIO_MODELS[0],
+            contents:[{role:'user',parts:[{text:prompt}]}],
+            config:{thinkingConfig:{thinkingLevel:'low'}}
+          }),10000,'Opening greeting');
+          const generated=clean(response?.text||'');
+          if(generated) opening=generated;
+        }catch(e){
+          console.error('[OPENING_FAIL]',String(e?.message||e));
+        }
         await call.id_list_message(
-          [{type:'text',data:'מה קורה גבר גבר, אליי אני שומע'}],
+          [{type:'text',data:opening}],
           {prependToNextAction:true}
         );
       }
