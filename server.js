@@ -94,6 +94,63 @@ function callerPhone(c) {
   return String(c?.values?.ApiPhone??c?.req?.query?.ApiPhone??c?.req?.body?.ApiPhone??'').trim()||'לא מזוהה';
 }
 
+function pcmToWav(pcm, sampleRate=24000, channels=1) {
+  const header=Buffer.alloc(44);
+  header.write('RIFF',0); header.writeUInt32LE(36+pcm.length,4); header.write('WAVE',8);
+  header.write('fmt ',12); header.writeUInt32LE(16,16); header.writeUInt16LE(1,20);
+  header.writeUInt16LE(channels,22); header.writeUInt32LE(sampleRate,24);
+  header.writeUInt32LE(sampleRate*channels*2,28); header.writeUInt16LE(channels*2,32);
+  header.writeUInt16LE(16,34); header.write('data',36); header.writeUInt32LE(pcm.length,40);
+  return Buffer.concat([header,pcm]);
+}
+
+async function generateOpeningAudio(previousContext='') {
+  const model=process.env.OPENING_TTS_MODEL||'gemini-2.5-flash-preview-tts';
+  let last;
+  for(const apiKey of apiKeys){
+    try{
+      const ai=new GoogleGenAI({apiKey});
+      const prompt=[
+        'צור פתיח קצר מאוד לשיחת טלפון בעברית מדוברת, חברית וטבעית.',
+        previousContext
+          ? 'התייחס בעדינות למה שהיה בשיחה הקודמת, בלי להמציא פרטים: '+previousContext
+          : 'אין שיחה קודמת זמינה. פתח בברכה טבעית כמו חבר.',
+        'אמור רק את הפתיח, בלי הסברים.'
+      ].join('\n\n');
+      const response=await timeout(ai.models.generateContent({
+        model,
+        contents:[{role:'user',parts:[{text:prompt}]}],
+        config:{
+          responseModalities:['AUDIO'],
+          speechConfig:{voiceConfig:{prebuiltVoiceConfig:{voiceName:process.env.OPENING_TTS_VOICE||'Kore'}}}
+        }
+      }),10000,'Gemini opening audio');
+      const part=response?.candidates?.[0]?.content?.parts?.find(p=>p?.inlineData?.data);
+      if(!part) throw new Error('Gemini returned no opening audio');
+      const mime=String(part.inlineData.mimeType||'audio/L16;rate=24000');
+      const rate=Number((mime.match(/rate=(\\d+)/)||[])[1]||24000);
+      const raw=Buffer.from(part.inlineData.data,'base64');
+      const wav=pcmToWav(raw,rate,1);
+      const token=String(process.env.YEMOT_API_KEY||'').trim();
+      const path='ivr2:/1/ai-opening-'+Date.now()+'.wav';
+      const form=new FormData();
+      form.append('file',new Blob([wav],{type:'audio/wav'}),'opening.wav');
+      const upload=await timeout(fetch('https://www.call2all.co.il/ym/api/UploadFile?'+new URLSearchParams({
+        token,path,convertAudio:'0',autoNumbering:'false',tts:'0'
+      }),{method:'POST',body:form}),REQUEST_TIMEOUT_MS,'upload opening audio');
+      const body=await upload.text();
+      if(!upload.ok) throw new Error('UploadFile HTTP '+upload.status+' '+body);
+      console.log('[OPENING_AUDIO_READY]',path);
+      return path.replace(/^ivr2:/,'');
+    }catch(e){
+      last=e;
+      console.error('[OPENING_AUDIO_FAIL]',String(e?.message||e));
+    }
+  }
+  throw last||new Error('Could not generate opening audio');
+}
+
+
 async function downloadRecording(path) {
   const p=path.startsWith('ivr2:')?path:'ivr2:'+path;
   const token=String(process.env.YEMOT_API_KEY||'').trim();
@@ -300,34 +357,21 @@ async function callHandler(call) {
       activeCalls.get(id).lastActivity=Date.now();
 
       if(turn===0){
-        const previousContext=history.length
-          ? history.map(x=>'מתקשר: '+x.transcript+'\\nעוזר: '+x.reply).join('\\n')
-          : '';
-        let opening='מה קורה גבר, אני איתך. מה קורה?';
+        const previous=conversations.filter(x=>x.phone===p).slice(-6)
+          .map(x=>'מתקשר: '+x.transcript+' עוזר: '+x.reply).join('\\n');
         try{
-          const ai=new GoogleGenAI({apiKey:apiKeys[0]});
-          const prompt=[
-            SYSTEM,
-            'זהו פתיח לשיחה טלפונית. צור משפט פתיחה קצר, טבעי, חברי ולא רשמי בעברית מדוברת.',
-            previousContext
-              ? 'יש הקשר מהשיחה הקודמת. התייחס אליו בעדינות ובאופן טבעי, בלי להמציא פרטים:\\n'+previousContext
-              : 'אין שיחה קודמת זמינה, לכן פתח בברכה טבעית וקצרה.',
-            'החזר רק את משפט הפתיחה להקראה בטלפון, בלי הסברים ובלי מרכאות.'
-          ].join('\\n\\n');
-          const response=await timeout(ai.models.generateContent({
-            model:AUDIO_MODELS[0],
-            contents:[{role:'user',parts:[{text:prompt}]}],
-            config:{thinkingConfig:{thinkingLevel:'low'}}
-          }),10000,'Opening greeting');
-          const generated=clean(response?.text||'');
-          if(generated) opening=generated;
+          const openingPath=await generateOpeningAudio(previous);
+          await call.id_list_message(
+            [{type:'file',data:openingPath}],
+            {prependToNextAction:true}
+          );
         }catch(e){
-          console.error('[OPENING_FAIL]',String(e?.message||e));
+          console.error('[OPENING_AUDIO_FALLBACK]',String(e?.message||e));
+          await call.id_list_message(
+            [{type:'text',data:'מה קורה גבר, אני איתך'}],
+            {prependToNextAction:true}
+          );
         }
-        await call.id_list_message(
-          [{type:'text',data:opening}],
-          {prependToNextAction:true}
-        );
       }
 
       const recordStarted=Date.now();
