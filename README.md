@@ -1,6 +1,6 @@
 # YEMOT Voice AI
 
-קו טלפון אישי מבוסס ימות המשיח ו-Google Gemini Audio.
+קו טלפון אישי מבוסס ימות המשיח ו-Google Gemini Audio (מודל ברירת מחדל: `gemini-flash-lite-latest`).
 
 ## הפעלה
 1. התקן Node.js 20 ומעלה.
