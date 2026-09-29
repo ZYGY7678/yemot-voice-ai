@@ -345,7 +345,7 @@ async function callHandler(call) {
 
   const history=[];
   try {
-    const SILENT_RECORD_PROMPT=[{type:'text',data:'בסיום דבריך הקש סולמית'}];
+    const SILENT_RECORD_PROMPT=[]; // ללא הודעה קולית; סיום ההקלטה באמצעות #
 
     for(let turn=0;turn<30;turn++){
       activeCalls.get(id).lastActivity=Date.now();
