@@ -110,13 +110,7 @@ async function generateOpeningAudio(previousContext='') {
   for(const apiKey of apiKeys){
     try{
       const ai=new GoogleGenAI({apiKey});
-      const prompt=[
-        'צור פתיח קצר מאוד לשיחת טלפון בעברית מדוברת, חברית וטבעית.',
-        previousContext
-          ? 'התייחס בעדינות למה שהיה בשיחה הקודמת, בלי להמציא פרטים: '+previousContext
-          : 'אין שיחה קודמת זמינה. פתח בברכה טבעית כמו חבר.',
-        'אמור רק את הפתיח, בלי הסברים.'
-      ].join('\n\n');
+      const prompt='אמור בדיוק את המשפט הבא בעברית טבעית וברורה, ללא תוספות: היי אני צחי במה אני יכול לעזור לך?';
       const response=await timeout(ai.models.generateContent({
         model,
         contents:[{role:'user',parts:[{text:prompt}]}],
@@ -357,10 +351,8 @@ async function callHandler(call) {
       activeCalls.get(id).lastActivity=Date.now();
 
       if(turn===0){
-        const previous=conversations.filter(x=>x.phone===p).slice(-6)
-          .map(x=>'מתקשר: '+x.transcript+' עוזר: '+x.reply).join('\\n');
         try{
-          const openingPath=await generateOpeningAudio(previous);
+          const openingPath=await generateOpeningAudio();
           await call.id_list_message(
             [{type:'file',data:openingPath}],
             {prependToNextAction:true}
