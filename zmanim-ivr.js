@@ -484,7 +484,7 @@ export function registerZmanimRoute(router, {downloadRecording}) {
       const readVoiceText = async (prompt, valName) => {
         const value = await call.read(
           [{type:'text', data:prompt}],
-          'voice',
+          'stt',
           {
             val_name: valName,
             max_digits: '*',
