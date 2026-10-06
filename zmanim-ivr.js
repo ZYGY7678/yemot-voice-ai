@@ -689,81 +689,45 @@ async function chooseSavedSearch(call, savedSearches) {
   const items = Array.isArray(savedSearches) ? savedSearches.filter(x => x?.location) : [];
   if (!items.length) {
     await call.id_list_message([
-      {type:'text', data:phoneTtsText('אין עדיין חיפושים שמורים\nכדי לשמור חיפוש, בצעו חיפוש רגיל, ובמהלך הרשימה הקישו כוכבית')}
+      {type:'text', data:phoneTtsText(
+        'אין עדיין חיפושים שמורים, ' +
+        'כדי לשמור חיפוש בצעו חיפוש רגיל, ובסוף החיפוש הקישו 3'
+      )}
     ]);
     return null;
   }
 
-  const pageSize = 8;
-  let page = 0;
+  const pageSize=8;
+  let page=0;
+  while(true){
+    const startIndex=page*pageSize;
+    const pageItems=items.slice(startIndex,startIndex+pageSize);
+    if(!pageItems.length){page=0;continue;}
 
-  while (true) {
-    const startIndex = page * pageSize;
-    const pageItems = items.slice(startIndex, startIndex + pageSize);
-    if (!pageItems.length) { page = 0; continue; }
+    const listText=[
+      'החיפושים השמורים שלכם',
+      ...pageItems.map((item,index)=>'חיפוש '+(index+1)+', '+cleanText(item.location)),
+      startIndex+pageItems.length<items.length ? 'לחיפושים נוספים הקישו 9' : '',
+      page>0 ? 'לחזרה לחיפושים הקודמים הקישו 0' : ''
+    ].filter(Boolean).join('\n');
 
-    let selected = null;
-    let navigated = false;
+    await call.id_list_message(
+      [{type:'text',data:phoneTtsText(listText)}],
+      {prependToNextAction:true}
+    );
 
-    for (let index = 0; index < pageItems.length; index++) {
-      const number = index + 1;
-      const text = [
-        'חיפוש ' + number + ', ' + cleanText(pageItems[index].location),
-        'לבחירת החיפוש, הקישו ' + number
-      ].join('\n');
-
-      const choice = callReadValue(await call.read(
-        [{type:'text', data:phoneTtsText(text)}],
-        'tap',
-        {
-          val_name:'saved_search_page_' + page + '_item_' + index,
-          max_digits:1,
-          min_digits:1,
-          max:1,
-          sec_wait:0.5,
-          read_none:true,
-          empty_val:'None',
-          typing_playback_mode:'Number',
-          block_change_keyboard:true,
-          block_asterisk_key:true
-        }
-      ));
-
-      if (!choice || choice === 'None') continue;
-      if (choice === '9' && startIndex + pageItems.length < items.length) {
-        page += 1;
-        navigated = true;
-        break;
-      }
-      if (choice === '0' && page > 0) {
-        page -= 1;
-        navigated = true;
-        break;
-      }
-
-      const n = Number(choice);
-      if (Number.isInteger(n) && n >= 1 && n <= pageItems.length) {
-        selected = pageItems[n - 1].location;
-        break;
-      }
-    }
-
-    if (navigated) continue;
-    if (selected) return selected;
-
-    const controls = [];
-    if (startIndex + pageItems.length < items.length) controls.push('לחיפושים נוספים, הקישו 9');
-    if (page > 0) controls.push('לחזרה לחיפושים הקודמים, הקישו 0');
-    controls.push('לבחירת חיפוש, הקישו את מספר החיפוש');
-
-    const choice = callReadValue(await call.read(
-      [{type:'text', data:phoneTtsText(controls.join('\n'))}],
+    const choice=callReadValue(await call.read(
+      [{type:'text',data:phoneTtsText(
+        'לבחירת חיפוש, הקישו את המספר שלו' +
+        (startIndex+pageItems.length<items.length ? ', לחיפושים נוספים הקישו 9' : '') +
+        (page>0 ? ', לחזרה הקישו 0' : '')
+      )}],
       'tap',
       {
-        val_name:'saved_search_controls_page_' + page,
+        val_name:'saved_search_choice_page_'+page,
         max_digits:1,
         min_digits:1,
-        sec_wait:15,
+        sec_wait:20,
         empty_val:'None',
         typing_playback_mode:'Number',
         block_change_keyboard:true,
@@ -771,20 +735,11 @@ async function chooseSavedSearch(call, savedSearches) {
       }
     ));
 
-    if (choice === '9' && startIndex + pageItems.length < items.length) {
-      page += 1;
-      continue;
-    }
-    if (choice === '0' && page > 0) {
-      page -= 1;
-      continue;
-    }
+    if(choice==='9' && startIndex+pageItems.length<items.length){page++;continue;}
+    if(choice==='0' && page>0){page--;continue;}
 
-    const n = Number(choice);
-    if (Number.isInteger(n) && n >= 1 && n <= pageItems.length) {
-      return pageItems[n - 1].location;
-    }
-    page = 0;
+    const n=Number(choice);
+    if(Number.isInteger(n)&&n>=1&&n<=pageItems.length) return pageItems[n-1].location;
   }
 }
 
@@ -865,201 +820,133 @@ export function registerZmanimRoute({
   incomingApiParam,
   callerPhone,
   saveLastSearch,
-  saveSearch,
-  getSavedSearches,
-  getLastSearch
+  saveSearch
 } = {}) {
   router.all('/yemot/zmanim', async call => {
     try {
-      const phone = callerPhone ? callerPhone(call) : 'unknown';
+      const phone=callerPhone ? callerPhone(call) : 'unknown';
+      let address=null;
+      let location='';
 
-      while (true) {
-        const mainChoice = callReadValue(await call.read(
-          [{
-            type:'text',
-            data:phoneTtsText(
-              'שלום, הגעתם לקו המינינים הקרובים שמבוסס על נדרים פלוס, והוקם על ידי חייא שיאומי מאתר מתמחים טופ!' +
-              '\\nלחיפוש חדש של המניין הקרוב אליכם הקישו 1' +
-              '\\nלחיפושים שמורים הקישו 2' +
-              '\\nלחיפוש האחרון הקישו 3'
-            )
-          }],
+      for(let attempt=0;attempt<3&&!location;attempt++){
+        const method=callReadValue(await call.read(
+          [{type:'text',data:phoneTtsText(
+            'כדי להקליט בהקלטה אחת את היישוב ואת הרחוב, הקישו 1' +
+            '\nכדי להקליד את היישוב ואת הרחוב במקלדת עברית, הקישו 2'
+          )}],
           'tap',
           {
-            val_name:'zmanim_main_menu',
-            max_digits:1,
-            min_digits:1,
-            sec_wait:20,
-            empty_val:'None',
-            digits_allowed:[1,2,3],
-            typing_playback_mode:'Number',
-            block_change_keyboard:true,
-            block_asterisk_key:true
+            val_name:'location_input_method_'+attempt,
+            max_digits:1,min_digits:1,sec_wait:15,empty_val:'None',
+            digits_allowed:[1,2],typing_playback_mode:'Number',
+            block_change_keyboard:true,block_asterisk_key:true
           }
         ));
 
-        if (mainChoice === '2') {
-          const saved = await getSavedSearches(phone);
-          const selectedLocation = await chooseSavedSearch(call, saved);
-          if (!selectedLocation) continue;
-
-          const result = await performZmanimSearch(call, selectedLocation, phone, {
-            saveLastSearch,
-            saveSearch
-          });
-
-          if (result === null) continue;
-          return result;
-        }
-
-        if (mainChoice === '3') {
-          const last = await getLastSearch(phone);
-
-          if (!last?.location) {
-            await call.id_list_message([
-              {type:'text', data:phoneTtsText(
-                'אין חיפוש אחרון שמור' +
-                '\nלחיפוש חדש, הקישו 1'
-              )}
-            ]);
-            continue;
-          }
-
-          // שלוחה 3 = חיפוש חדש לפי אותו מקום אחרון, בלי לבקש הקלדה חוזרת
-          const result = await performZmanimSearch(call, last.location, phone, {
-            saveLastSearch,
-            saveSearch
-          });
-
-          if (result === null) continue;
-          return result;
-        }
-
-        if (mainChoice !== '1') continue;
-
-        let address = null;
-        let location = '';
-
-        for (let attempt = 0; attempt < 3 && !location; attempt++) {
-          const method = callReadValue(await call.read(
-            [{
-              type:'text',
-              data:phoneTtsText(
-                'כדי להקליט בהקלטה אחת את היישוב ואת הרחוב, הקישו 1' +
-                '\\nכדי להקליד את היישוב ואת הרחוב במקלדת עברית, הקישו 2'
-              )
-            }],
+        if(method==='2'){
+          const typedText=callReadValue(await call.read(
+            [{type:'text',data:phoneTtsText(
+              'הקלידו במקלדת עברית את שם היישוב ואת שם הרחוב יחד, ' +
+              'בסיום ההקלדה הקישו סולמית'
+            )}],
             'tap',
             {
-              val_name:'location_input_method_' + attempt,
-              max_digits:1,
-              min_digits:1,
-              sec_wait:15,
-              empty_val:'None',
-              digits_allowed:[1,2],
-              typing_playback_mode:'Number',
-              block_change_keyboard:true,
-              block_asterisk_key:true
+              val_name:'city_street_typed_'+attempt,
+              min_digits:2,max_digits:100,sec_wait:60,empty_val:'None',
+              typing_playback_mode:'HebrewKeyboard',
+              block_change_keyboard:true,block_asterisk_key:false
             }
           ));
-
-          if (method === '2') {
-            const typedText = callReadValue(await call.read(
-              [{
-                type:'text',
-                data:phoneTtsText(
-                  'הקלידו במקלדת עברית את שם היישוב ואת שם הרחוב יחד, בסיום ההקלדה הקישו סולמית'
-                )
-              }],
-              'tap',
-              {
-                val_name:'city_street_typed_' + attempt,
-                min_digits:5,
-                max_digits:100,
-                sec_wait:60,
-                empty_val:'None',
-                typing_playback_mode:'HebrewKeyboard',
-                block_change_keyboard:true,
-                block_asterisk_key:false
-              }
-            ));
-
-            if (!typedText || typedText.length < 2) continue;
-            location = typedText;
-          } else if (method === '1') {
-            address = await recordAndTranscribeLocation(call, attempt, {
-              downloadRecording,
-              transcribeSpeech,
-              incomingApiParam
-            });
-            if (!address) continue;
-            location = cleanText(address.city + ' ' + address.street);
-          } else {
-            continue;
-          }
-
-          const confirmationText = method === '2'
-            ? phoneTtsText(
-                'שמעתי, ' + location +
-                '\\nלהמשיך הקישו 1, להזין מחדש הקישו 2'
-              )
-            : phoneTtsText(
-                'שמעתי, יישוב ' + address.city +
-                ', רחוב ' + address.street +
-                '\\nלהמשיך הקישו 1, להזין מחדש הקישו 2'
-              );
-
-          const answerValue = callReadValue(await call.read(
-            [{type:'text', data:confirmationText}],
-            'tap',
-            {
-              val_name:'city_street_confirm_' + attempt,
-              max_digits:1,
-              min_digits:1,
-              sec_wait:15,
-              empty_val:'None',
-              typing_playback_mode:'Number',
-              block_change_keyboard:true,
-              block_asterisk_key:true
-            }
-          ));
-
-          if (answerValue === '2') {
-            address = null;
-            location = '';
-            continue;
-          }
-
-          const result = await performZmanimSearch(call, location, phone, {
-            saveLastSearch,
-            saveSearch
+          if(!typedText||typedText.length<2) continue;
+          location=typedText;
+        }else if(method==='1'){
+          address=await recordAndTranscribeLocation(call,attempt,{
+            downloadRecording,transcribeSpeech,incomingApiParam
           });
-
-          if (result === null) {
-            address = null;
-            location = '';
-            continue;
-          }
-
-          return result;
+          if(!address) continue;
+          location=cleanText(address.city+' '+address.street);
+        }else{
+          continue;
         }
 
-        return await call.id_list_message([
-          {type:'text', data:phoneTtsText('לא הצלחתי לזהות את המקום, נסו שוב')}
-        ]);
-      }
-    } catch (error) {
-      console.error('[ZMANIM_IVR_ERROR]', error?.stack || error);
-      try {
-        return await call.id_list_message([
-          {
-            type:'text',
-            data:phoneTtsText(
-              'מצטערים, לא הצלחתי לקבל את המקום או למצוא את המניינים כרגע, נסו שוב'
+        const confirmationText=method==='2'
+          ? phoneTtsText(
+              'שמעתי, '+location+
+              '\nלהמשיך הקישו 1, להזין מחדש הקישו 2, לשמור את החיפוש הקישו 3'
             )
+          : phoneTtsText(
+              'שמעתי, יישוב '+address.city+
+              ', רחוב '+address.street+
+              '\nלהמשיך הקישו 1, להזין מחדש הקישו 2, לשמור את החיפוש הקישו 3'
+            );
+
+        const answerValue=callReadValue(await call.read(
+          [{type:'text',data:confirmationText}],
+          'tap',
+          {
+            val_name:'city_street_confirm_'+attempt,
+            max_digits:1,min_digits:1,sec_wait:15,empty_val:'None',
+            digits_allowed:[1,2,3],typing_playback_mode:'Number',
+            block_change_keyboard:true,block_asterisk_key:true
           }
+        ));
+
+        if(answerValue==='2'){
+          address=null;
+          location='';
+          continue;
+        }
+
+        if(answerValue==='3' && saveSearch){
+          await saveSearch(phone,location);
+          await call.id_list_message(
+            [{type:'text',data:phoneTtsText('החיפוש נשמר בהצלחה')}],
+            {prependToNextAction:true}
+          );
+        }
+
+        const result=await performZmanimSearch(call,location,phone,{saveLastSearch});
+        if(result===null){
+          address=null;
+          location='';
+          continue;
+        }
+        return result;
+      }
+
+      return await call.id_list_message([
+        {type:'text',data:phoneTtsText('לא הצלחתי לזהות את המקום, נסו שוב')}
+      ]);
+    }catch(error){
+      console.error('[ZMANIM_IVR_ERROR]',error?.stack||error);
+      try{
+        return await call.id_list_message([
+          {type:'text',data:phoneTtsText(
+            'מצטערים, לא הצלחתי לקבל את המקום או למצוא את המניינים כרגע, נסו שוב'
+          )}
         ]);
-      } catch {}
+      }catch{}
+    }
+  });
+}
+
+export function registerSavedZmanimRoute(router,{callerPhone,getSavedSearches,saveLastSearch}={}) {
+  router.all('/yemot/zmanim/saved',async call=>{
+    try{
+      const phone=callerPhone ? callerPhone(call) : 'unknown';
+      const saved=await getSavedSearches(phone);
+      const selectedLocation=await chooseSavedSearch(call,saved);
+      if(!selectedLocation) return await call.go_to_folder('/');
+      const result=await performZmanimSearch(call,selectedLocation,phone,{saveLastSearch});
+      if(result===null) return await call.go_to_folder('/');
+      return result;
+    }catch(error){
+      console.error('[ZMANIM_SAVED_ERROR]',error?.stack||error);
+      try{
+        return await call.id_list_message([
+          {type:'text',data:phoneTtsText('לא הצלחתי לטעון את החיפושים השמורים, נסו שוב')}
+        ]);
+      }catch{}
     }
   });
 }
