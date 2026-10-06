@@ -474,7 +474,7 @@ export function formatZmanimForPhone(data) {
   return cleanText(parts.join(' '));
 }
 
-export function registerZmanimRoute(router, {downloadRecording}) {
+export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech}) {
   router.all('/yemot/zmanim', async call => {
     try {
       console.log('[ZMANIM_IVR] incoming call - Yemot voice transcription');
