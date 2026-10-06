@@ -187,20 +187,73 @@ function parseDirectResultTimes(raw) {
 }
 
 async function geocodeLocation(location) {
-  const url = 'https://nominatim.openstreetmap.org/search?' + new URLSearchParams({
-    format: 'jsonv2',
-    limit: '1',
-    countrycodes: 'il',
-    q: location
-  });
-  const response = await fetch(url, {
-    headers: {'User-Agent': 'yemot-voice-ai/1.0'}
-  });
-  if (!response.ok) throw new Error('Geocoding HTTP ' + response.status);
-  const rows = await response.json();
-  const row = Array.isArray(rows) ? rows[0] : null;
-  if (!row?.lat || !row?.lon) throw new Error('לא נמצאו קואורדינטות לכתובת');
-  return {lat:Number(row.lat), lng:Number(row.lon), displayName:cleanText(row.display_name || location)};
+  const aliases = {
+    'ניבות': 'נתיבות',
+    'נתיבו': 'נתיבות'
+  };
+  const normalized = aliases[cleanText(location)] || cleanText(location);
+  const providers = [
+    {
+      name: 'photon',
+      url: 'https://photon.komoot.io/api/?' + new URLSearchParams({
+        q: normalized,
+        limit: '1',
+        lang: 'he'
+      }),
+      parse: data => data?.features?.[0]?.geometry?.coordinates
+    },
+    {
+      name: 'nominatim',
+      url: 'https://nominatim.openstreetmap.org/search?' + new URLSearchParams({
+        format: 'jsonv2',
+        limit: '1',
+        countrycodes: 'il',
+        q: normalized
+      }),
+      parse: data => {
+        const row = Array.isArray(data) ? data[0] : null;
+        return row?.lon && row?.lat ? [Number(row.lon), Number(row.lat)] : null;
+      }
+    }
+  ];
+
+  let lastError;
+  for (const provider of providers) {
+    try {
+      const response = await fetch(provider.url, {
+        headers: {
+          'User-Agent': 'yemot-voice-ai/1.0',
+          'Accept': 'application/json'
+        }
+      });
+      if (!response.ok) {
+        lastError = new Error(provider.name + ' HTTP ' + response.status);
+        continue;
+      }
+      const data = await response.json();
+      const coords = provider.parse(data);
+      if (Array.isArray(coords) && coords.length >= 2) {
+        console.log('[ZMANIM_GEOCODE_OK]', JSON.stringify({
+          provider: provider.name,
+          input: location,
+          normalized,
+          lat: Number(coords[1]),
+          lng: Number(coords[0])
+        }));
+        return {
+          lat: Number(coords[1]),
+          lng: Number(coords[0]),
+          displayName: normalized
+        };
+      }
+      lastError = new Error(provider.name + ' no result');
+    } catch (error) {
+      lastError = error;
+      console.error('[ZMANIM_GEOCODE_FAIL]', provider.name, error?.message || error);
+    }
+  }
+
+  throw lastError || new Error('לא נמצאו קואורדינטות לכתובת');
 }
 
 export async function fetchNedarimZmanim(locationText) {
