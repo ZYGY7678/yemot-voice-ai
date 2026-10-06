@@ -272,21 +272,28 @@ export function formatZmanimForPhone(data) {
 export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech}) {
   router.all('/yemot/zmanim', async call => {
     try {
-      console.log('[ZMANIM_IVR] incoming call - text keypad input');
+      console.log('[ZMANIM_IVR] incoming call - server-side transcription');
 
       const welcome = 'שלום, הגעתם לקו המניין הקרוב אליך של נדרים פלוס. פותח על ידי חייא שיאומי ממתמחים טופ.';
 
-      // קלט בהקלדה/מקלדת עברית של ימות המשיח. סולמית מסיימת את הקלט.
-      const city = cleanText(await call.read(
-        [{type:'text', data: welcome + ' אנא אמרו עכשיו את שם היישוב. לאחר שתסיימו לדבר, ימות המשיח יתמלל את דבריכם.'}],
-        'stt',
+      // הקלטה רגילה בלבד. אין כאן STT של ימות המשיח ואין שימוש ביחידות תמלול.
+      const cityRecording = await call.read(
+        [{type:'text', data: welcome + ' אנא אמרו עכשיו את שם היישוב. לאחר שתסיימו לדבר, ההקלטה תישלח לשרת לצורך תמלול.'}],
+        'record',
         {
-          lang: 'he-IL',
-          block_typing: true,
-          use_records_recognition_engine: false,
-          allow_empty: false
+          min_length: 1,
+          max_length: 8,
+          no_confirm_menu: true,
+          save_on_hangup: false
         }
-      ));
+      );
+      if (!cityRecording) {
+        throw new Error('No city recording received');
+      }
+      console.log('[ZMANIM_CITY_RECORDING]', String(cityRecording));
+      const city = cleanText(await transcribeSpeech(await downloadRecording(String(cityRecording)), {
+        prompt: 'תמלול שם יישוב בישראל'
+      }));
 
       if (!city || city === 'None') {
         await call.id_list_message([{type:'text', data:'לא התקבל שם יישוב. אנא נסו שוב.'}], {prependToNextAction:true});
@@ -295,16 +302,23 @@ export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech
 
       console.log('[ZMANIM_CITY_TYPED]', city);
 
-      const street = cleanText(await call.read(
-        [{type:'text', data:'תודה. עכשיו אמרו את שם הרחוב. לאחר שתסיימו לדבר, ימות המשיח יתמלל גם אותו.'}],
-        'stt',
+      const streetRecording = await call.read(
+        [{type:'text', data:'תודה. עכשיו אמרו את שם הרחוב. לאחר שתסיימו לדבר, ההקלטה תישלח לשרת לצורך תמלול.'}],
+        'record',
         {
-          lang: 'he-IL',
-          block_typing: true,
-          use_records_recognition_engine: false,
-          allow_empty: false
+          min_length: 1,
+          max_length: 8,
+          no_confirm_menu: true,
+          save_on_hangup: false
         }
-      ));
+      );
+      if (!streetRecording) {
+        throw new Error('No street recording received');
+      }
+      console.log('[ZMANIM_STREET_RECORDING]', String(streetRecording));
+      const street = cleanText(await transcribeSpeech(await downloadRecording(String(streetRecording)), {
+        prompt: 'תמלול שם רחוב בישראל'
+      }));
 
       if (!street || street === 'None') {
         await call.id_list_message([{type:'text', data:'לא התקבל שם רחוב. אנא נסו שוב.'}], {prependToNextAction:true});
