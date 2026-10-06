@@ -973,53 +973,185 @@ export function registerLastZmanimRoute(router, {callerPhone, getLastSearch}) {
   });
 }
 
-export async function configureZmanimExtension({
-  token,
-  publicUrl,
-  extension = '1',
-  apiPath = '/yemot/zmanim'
-} = {}) {
-  const resolvedToken = String(token || process.env.ZMANIM_YEMOT_TOKEN || '').trim();
-  const base = String(publicUrl || process.env.ZMANIM_PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || '').replace(/\/$/, '');
-  if (!resolvedToken || !base) {
-    console.warn('[ZMANIM_CONFIG] missing token or public URL');
-    return {ok:false, error:'missing token or public URL'};
+function makeHoldMusicWav() {
+  const sampleRate=8000;
+  const duration=8;
+  const count=sampleRate*duration;
+  const data=Buffer.alloc(count*2);
+
+  const notes=[
+    {start:0.0,dur:0.6,f:261.63},
+    {start:0.65,dur:0.6,f:329.63},
+    {start:1.3,dur:0.6,f:392.00},
+    {start:2.0,dur:0.8,f:523.25},
+    {start:3.0,dur:0.6,f:392.00},
+    {start:3.65,dur:0.6,f:329.63},
+    {start:4.3,dur:0.6,f:293.66},
+    {start:5.0,dur:1.0,f:392.00},
+    {start:6.2,dur:0.55,f:329.63},
+    {start:6.8,dur:1.0,f:261.63}
+  ];
+
+  for(let i=0;i<count;i++){
+    const t=i/sampleRate;
+    let sample=0;
+    for(const note of notes){
+      const local=t-note.start;
+      if(local<0||local>note.dur) continue;
+      const attack=Math.min(1,local/0.03);
+      const release=Math.min(1,(note.dur-local)/0.12);
+      const env=Math.max(0,Math.min(1,attack,release));
+      sample += Math.sin(2*Math.PI*note.f*local)*env*0.16;
+    }
+    sample=Math.max(-1,Math.min(1,sample));
+    data.writeInt16LE(Math.round(sample*32767),i*2);
   }
 
-  const params = new URLSearchParams({
-    token:resolvedToken,
-    path:'ivr2:/' + String(extension),
-    type:'api',
-    api_link:base + apiPath,
-    api_url_post:'yes',
-    api_wait:'yes',
-    api_wait_answer_music_on_hold:'yes',
-    api_wait_answer_music_on_hold_continue_all_sends:'yes',
-    api_timeout:'90',
-    tts_rate:'1',
-    rate:'1',
-    api_add_0:'YemotToken=' + resolvedToken,
-    api_add_2:'DetailsTxt=yes'
-  });
+  const wav=Buffer.alloc(44+data.length);
+  wav.write('RIFF',0);
+  wav.writeUInt32LE(36+data.length,4);
+  wav.write('WAVE',8);
+  wav.write('fmt ',12);
+  wav.writeUInt32LE(16,16);
+  wav.writeUInt16LE(1,20);
+  wav.writeUInt16LE(1,22);
+  wav.writeUInt32LE(sampleRate,24);
+  wav.writeUInt32LE(sampleRate*2,28);
+  wav.writeUInt16LE(2,32);
+  wav.writeUInt16LE(16,34);
+  wav.write('data',36);
+  wav.writeUInt32LE(data.length,40);
+  data.copy(wav,44);
+  return wav;
+}
 
-  const configuredGeminiKey = String(
+async function ensureZmanimHoldMusic(token) {
+  const folder='ivr2:/1/hold_music';
+  const name='ZmanimWaitMusic';
+  const base='https://www.call2all.co.il/ym/api';
+  try{
+    await fetch(base+'/UpdateExtension?'+new URLSearchParams({
+      token,
+      path:folder,
+      type:'playfile'
+    }));
+
+    const check=await fetch(base+'/GetMusicOnHoldByPath?'+new URLSearchParams({
+      token,
+      path:folder
+    }));
+    let existing=null;
+    try{
+      const body=await check.text();
+      existing=JSON.parse(body);
+    }catch{}
+
+    if(existing?.data){
+      console.log('[ZMANIM_HOLD_MUSIC]',JSON.stringify({ok:true,name:String(existing.data),source:'existing'}));
+      return String(existing.data);
+    }
+
+    const wav=makeHoldMusicWav();
+    const form=new FormData();
+    form.append('file',new Blob([wav],{type:'audio/wav'}),'zmanim-wait.wav');
+    const upload=await fetch(base+'/UploadFile?'+new URLSearchParams({
+      token,
+      path:folder+'/zmanim-wait.wav',
+      convertAudio:'0'
+    }),{method:'POST',body:form});
+    const uploadBody=await upload.text();
+    let uploadParsed=null;
+    try{uploadParsed=JSON.parse(uploadBody)}catch{}
+
+    if(!upload.ok||uploadParsed?.responseStatus&&uploadParsed.responseStatus!=='OK'){
+      throw new Error('UploadFile HTTP '+upload.status);
+    }
+
+    const create=await fetch(base+'/CreateMusicOnHolds?'+new URLSearchParams({
+      token,
+      folderPath:folder,
+      name
+    }));
+    const createBody=await create.text();
+    let created=null;
+    try{created=JSON.parse(createBody)}catch{}
+
+    if(!create.ok||created?.responseStatus&&created.responseStatus!=='OK'){
+      throw new Error('CreateMusicOnHolds HTTP '+create.status);
+    }
+
+    const finalCheck=await fetch(base+'/GetMusicOnHoldByPath?'+new URLSearchParams({
+      token,
+      path:folder
+    }));
+    const finalBody=await finalCheck.text();
+    let finalParsed=null;
+    try{finalParsed=JSON.parse(finalBody)}catch{}
+    const holdName=finalParsed?.data || created?.status || created?.data;
+
+    if(!holdName) throw new Error('Music on hold name was not returned');
+    console.log('[ZMANIM_HOLD_MUSIC]',JSON.stringify({ok:true,name:String(holdName),source:'created'}));
+    return String(holdName);
+  }catch(error){
+    console.error('[ZMANIM_HOLD_MUSIC_FAIL]',error?.message||error);
+    return '';
+  }
+}
+
+export async function configureZmanimExtension({token,publicUrl}={}) {
+  const resolvedToken=String(token||process.env.ZMANIM_YEMOT_TOKEN||'').trim();
+  const base=String(publicUrl||process.env.ZMANIM_PUBLIC_URL||process.env.RENDER_EXTERNAL_URL||'').replace(/\/$/,'');
+  if(!resolvedToken||!base){
+    console.warn('[ZMANIM_CONFIG] missing token or public URL');
+    return {ok:false,error:'missing token or public URL'};
+  }
+
+  const configuredGeminiKey=String(
     process.env.ZMANIM_TRANSCRIPTION_GEMINI_KEY ||
-    process.env.GEMINI_TRANSCRIPTION_API_KEY ||
-    ''
+    process.env.GEMINI_TRANSCRIPTION_API_KEY || ''
   ).trim();
-  if (configuredGeminiKey) params.set('api_add_1','GeminiKey=' + configuredGeminiKey);
 
-  const response = await fetch('https://www.call2all.co.il/ym/api/UpdateExtension?' + params);
-  const body = await response.text();
-  let parsed = body;
-  try { parsed = JSON.parse(body); } catch {}
-  const ok = response.ok && !(typeof parsed === 'string' && /error|שגיאה/i.test(parsed));
-  console.log('[ZMANIM_CONFIG]', JSON.stringify({
-    ok,
-    status:response.status,
-    extension,
-    api:base + apiPath,
-    response:typeof parsed === 'string' ? parsed.slice(0,500) : parsed
-  }));
-  return {ok,status:response.status,response:parsed};
+  const holdMusic=await ensureZmanimHoldMusic(resolvedToken);
+  const configs=[
+    {path:'ivr2:/',apiPath:'/yemot/main-menu',music:false},
+    {path:'ivr2:/1',apiPath:'/yemot/zmanim',music:true},
+    {path:'ivr2:/2',apiPath:'/yemot/zmanim/saved',music:true},
+    {path:'ivr2:/3',apiPath:'/yemot/zmanim/last',music:true}
+  ];
+
+  const results=[];
+  for(const cfg of configs){
+    const params=new URLSearchParams({
+      token:resolvedToken,
+      path:cfg.path,
+      type:'api',
+      api_link:base+cfg.apiPath,
+      api_url_post:'yes',
+      api_wait:'yes',
+      api_wait_answer_music_on_hold:cfg.music?'yes':'no',
+      api_wait_answer_music_on_hold_continue_all_sends:cfg.music?'yes':'no',
+      api_timeout:cfg.music?'90':'30',
+      tts_rate:'1',
+      rate:'1',
+      api_add_0:'YemotToken='+resolvedToken,
+      api_add_2:'DetailsTxt=yes'
+    });
+
+    if(cfg.music && holdMusic){
+      params.set('api_wait_answer_music_on_hold_different',holdMusic);
+    }
+    if(configuredGeminiKey) params.set('api_add_1','GeminiKey='+configuredGeminiKey);
+
+    const response=await fetch('https://www.call2all.co.il/ym/api/UpdateExtension?'+params);
+    const body=await response.text();
+    let parsed=body;
+    try{parsed=JSON.parse(body)}catch{}
+    const ok=response.ok && !(typeof parsed==='string'&&/error|שגיאה/i.test(parsed));
+    results.push({path:cfg.path,api:base+cfg.apiPath,ok,status:response.status,holdMusic:cfg.music?Boolean(holdMusic):false});
+    console.log('[ZMANIM_CONFIG]',JSON.stringify({
+      ok,status:response.status,path:cfg.path,api:base+cfg.apiPath,holdMusic:cfg.music?Boolean(holdMusic):false
+    }));
+  }
+
+  return {ok:results.every(x=>x.ok),results,holdMusic:holdMusic||null};
 }
