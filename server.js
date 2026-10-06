@@ -326,7 +326,7 @@ async function callHandler(call) {
 
       const recordStarted=Date.now();
       const recordPrompt = turn===0
-        ? [{type:'text',data:'שלום, מה נשמע? כאן צחי, אפשר לשאול שאלה אחרי הצפצוף, ובסיום להקיש סולמית'}]
+        ? [{type:'text',data:'שלום, הגעתם לקו המניין הקרוב אליך של נדרים פלוס. פותח על ידי חייא שיאומי ממתמחים טופ. אנא אמרו עכשיו בקול את שם היישוב או הכתובת שבה אתם גרים, ולאחר מכן המתינו.'}]
         : SILENT_RECORD_PROMPT;
       const recPath=await call.read(
         recordPrompt,
