@@ -548,7 +548,7 @@ function formatMinyanForPhone(item, number) {
   );
 }
 
-async async function selectMinyan(call, data, {saveSearch} = {}) {
+async function selectMinyan(call, data, {saveSearch} = {}) {
   const items = Array.isArray(data?.items) ? data.items : [];
   if (!items.length) {
     return await call.id_list_message([
