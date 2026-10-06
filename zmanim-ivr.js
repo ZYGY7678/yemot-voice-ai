@@ -286,8 +286,11 @@ export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech
           min_digits: 1,
           sec_wait: 15,
           empty_val: 'None',
-          keyboard: 'HebrewKeyboard',
-          block_change_keyboard: true
+          typing_playback_mode: 'HebrewKeyboard',
+          block_change_keyboard: true,
+          allow_empty: false,
+          block_asterisk_key: false,
+          block_zero_key: false
         }
       ));
 
