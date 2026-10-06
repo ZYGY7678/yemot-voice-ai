@@ -6,6 +6,7 @@ const IL_TZ = 'Asia/Jerusalem';
 function cleanText(value) {
   return String(value ?? '')
     .replace(/[\u0000-\u001f]+/g, ' ')
+    .replace(/[^\p{L}\p{N}\s:]/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
