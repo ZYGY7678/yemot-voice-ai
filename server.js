@@ -1,5 +1,8 @@
 import express from 'express';
-import { GoogleGenAI, Modality } from '@google/genai';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { GoogleGenAI, Modality, createUserContent, createPartFromUri } from '@google/genai';
 import { YemotRouter, ExitError } from 'yemot-router2';
 import YemotApi from 'yemot-api';
 import { registerZmanimRoute, configureZmanimExtension, fetchNedarimZmanim } from './zmanim-ivr.js';
@@ -66,7 +69,7 @@ const apiKeys = [
   .filter((x,i,arr) => arr.indexOf(x) === i);
 
 const LIVE_MODEL = 'gemini-3.8-live';
-const AUDIO_MODELS = ['gemini-3.5-transcribe','gemini-2.5-flash-lite','gemini-2.5-flash'];
+const AUDIO_MODELS = ['gemini-3.5-transcribe','gemini-3.8-flash'];
 const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 55000);
 const DASHBOARD_PASSWORD = String(process.env.DASHBOARD_PASSWORD || '1234');
 const SYSTEM = [
@@ -250,42 +253,91 @@ async function transcribeSpeech(buf) {
   const mimeType = detectAudioMime(buf);
   console.log('[ZMANIM_TRANSCRIPTION_INPUT]', JSON.stringify({bytes:buf.length,mimeType}));
   console.log('[ZMANIM_TRANSCRIPTION_KEYS]', apiKeys.length);
-  for (const apiKey of apiKeys) {
+
+  for (let keyIndex=0; keyIndex<apiKeys.length; keyIndex++) {
+    const apiKey=apiKeys[keyIndex];
     const ai = new GoogleGenAI({apiKey});
-    for (const model of AUDIO_MODELS) {
+    let tempPath='';
+
+    try {
+      tempPath = path.join(os.tmpdir(), 'yemot-audio-' + Date.now() + '-' + Math.random().toString(16).slice(2) + '.bin');
+      await fs.writeFile(tempPath, buf);
+
+      const audioFile = await timeout(
+        ai.files.upload({
+          file: tempPath,
+          config: {mimeType}
+        }),
+        20000,
+        'Gemini File API upload'
+      );
+
+      let uploaded = audioFile;
+      for(let i=0;i<10;i++){
+        if(!uploaded?.state || uploaded.state === 'ACTIVE') break;
+        if(uploaded.state === 'FAILED') throw new Error('Gemini File API processing failed');
+        await new Promise(r=>setTimeout(r,1000));
+        uploaded = await timeout(ai.files.get({name:audioFile.name}),10000,'Gemini File API status');
+      }
+
+      if (!uploaded?.uri) throw new Error('Gemini File API did not return a URI');
+
+      // Official dedicated transcription path.
       try {
-        const request = {
-          model,
-          contents:[{
-            role:'user',
-            parts:[
-              {text:'האזן להקלטה המצורפת. החזר רק את שם היישוב או הכתובת שהמתקשר אמר בעברית. בלי הסברים, בלי סימני פיסוק מיותרים. אם נאמר שם עיר בלבד, החזר רק את שם העיר.'},
-              {inlineData:{mimeType,data:buf.toString('base64')}}
-            ]
-          }]
-        };
-        if (!model.includes('transcribe')) {
-          request.config = {thinkingConfig:{thinkingLevel:'low'}};
-        }
-        const response = await timeout(ai.models.generateContent(request),20000,'Gemini speech transcription');
+        const response = await timeout(ai.models.generateContent({
+          model:'gemini-3.5-transcribe',
+          contents:[uploaded],
+          config:{
+            audioTranscriptionConfig:{
+              languageCodes:['he-IL']
+            }
+          }
+        }),20000,'Gemini 3.5 Transcribe');
+
         const text = clean(response?.text||'');
-        if (!text) throw new Error('Empty transcription');
-        console.log('[ZMANIM_TRANSCRIPTION_OK]',model);
+        if (text) {
+          console.log('[ZMANIM_TRANSCRIPTION_OK]',JSON.stringify({model:'gemini-3.5-transcribe',keyIndex:keyIndex+1}));
+          return text;
+        }
+        throw new Error('Empty transcription');
+      } catch (transcribeError) {
+        last=transcribeError;
+        console.error('[ZMANIM_TRANSCRIPTION_FAIL]', 'gemini-3.5-transcribe', String(transcribeError?.message||transcribeError));
+
+        // General current audio model fallback.
+        const response = await timeout(ai.models.generateContent({
+          model:'gemini-3.8-flash',
+          contents:createUserContent([
+            createPartFromUri(uploaded.uri, uploaded.mimeType || mimeType),
+            'תמלל את ההקלטה בעברית. החזר רק את המילים שנאמרו, ללא הסבר.'
+          ])
+        }),20000,'Gemini 3.8 audio transcription');
+
+        const text = clean(response?.text||'');
+        if (!text) throw new Error('Empty transcription from Gemini 3.8');
+        console.log('[ZMANIM_TRANSCRIPTION_OK]',JSON.stringify({model:'gemini-3.8-flash',keyIndex:keyIndex+1}));
         return text;
-      } catch (e) {
-        last = e;
-        console.error('[ZMANIM_TRANSCRIPTION_FAIL]',model,String(e?.message||e));
+      }
+    } catch(e) {
+      last=e;
+      console.error('[ZMANIM_TRANSCRIPTION_KEY_FAIL]',JSON.stringify({
+        keyIndex:keyIndex+1,
+        error:String(e?.message||e)
+      }));
+    } finally {
+      if(tempPath){
+        try{await fs.unlink(tempPath);}catch{}
       }
     }
   }
+
   throw last || new Error('No Gemini API key available');
 }
-
 async function answerAudioFile(buf, history=[]) {
   let last;
   for (const apiKey of apiKeys) {
     const ai = new GoogleGenAI({apiKey});
-    for (const model of AUDIO_MODELS) {
+    for (const model of ['gemini-3.8-flash']) {
       try {
         const context = history.length
           ? 'המשך השיחה הקודמת:\n' + history.map(x => 'מתקשר: ' + x.transcript + '\nעוזר: ' + x.reply).join('\n')
@@ -296,10 +348,9 @@ async function answerAudioFile(buf, history=[]) {
             role:'user',
             parts:[
               {text:[SYSTEM, context, 'הקשב להקלטה המצורפת. תחילה הבן מה המתקשר אמר, ואז ענה ישירות בעברית מדוברת וקצרה. החזר רק את התשובה להקראה בטלפון.'].filter(Boolean).join('\n\n')},
-              {inlineData:{mimeType:'audio/wav',data:buf.toString('base64')}}
+              {inlineData:{mimeType:detectAudioMime(buf),data:buf.toString('base64')}}
             ]
-          }],
-          config:{thinkingConfig:{thinkingLevel:'low'}}
+          }]
         }),20000,'Gemini audio response '+model);
         const reply=clean(response?.text||'');
         if(!reply) throw new Error('Empty Gemini response');
