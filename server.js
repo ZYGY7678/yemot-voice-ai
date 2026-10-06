@@ -5,7 +5,8 @@ import path from 'node:path';
 import { GoogleGenAI, Modality, createUserContent, createPartFromUri } from '@google/genai';
 import { YemotRouter, ExitError } from 'yemot-router2';
 import YemotApi from 'yemot-api';
-import { registerZmanimRoute, configureZmanimExtension, fetchNedarimZmanim } from './zmanim-ivr.js';
+import { registerZmanimRoute, registerLastZmanimRoute, configureZmanimExtension, fetchNedarimZmanim } from './zmanim-ivr.js';
+import { saveLastSearch, saveSearch, getSavedSearches, getLastSearch } from './zmanim-search-store.js';
 
 if (process.loadEnvFile) { try { process.loadEnvFile(); } catch {} }
 
@@ -79,21 +80,10 @@ const SYSTEM = [
   'אל תשתמש ב-Markdown. שמור על תשובות קצרות ומתאימות להקראה בטלפון.'
 ].filter(Boolean).join('\n\n');
 
-async function disableYemotWaitMusic() {
+async function configureLegacyVoice() {
   const token=String(process.env.YEMOT_API_KEY||'').trim();
   if(!token) return;
   try {
-    const qs=new URLSearchParams({
-      token,
-      path:'ivr2:/3',
-      api_wait_answer_music_on_hold:'no',
-      api_wait_play:'no'
-    });
-    const r=await fetch('https://www.call2all.co.il/ym/api/UpdateExtension?'+qs);
-    console.log('[YEMOT_WAIT_MUSIC_DISABLED]',r.status,await r.text());
-
-    // שלוחה 2: קול TTS שונה לגמרי מהקול הקודם.
-    // ימות המשיח מתעדת את Jacob כקול גברי נפרד.
     const voiceQs=new URLSearchParams({
       token,
       path:'ivr2:/2',
@@ -103,7 +93,7 @@ async function disableYemotWaitMusic() {
     const vr=await fetch('https://www.call2all.co.il/ym/api/UpdateExtension?'+voiceQs);
     console.log('[YEMOT_EXTENSION_2_VOICE_JACOB]',vr.status,await vr.text());
   } catch(e) {
-    console.error('[YEMOT_WAIT_MUSIC_CONFIG_FAIL]',e?.message||e);
+    console.error('[YEMOT_EXTENSION_2_VOICE_CONFIG_FAIL]',e?.message||e);
   }
 }
 
@@ -454,7 +444,20 @@ async function callHandler(call) {
 }
 
 router.all('/yemot',callHandler);
-registerZmanimRoute(router, {downloadRecording, transcribeSpeech, incomingApiParam});
+registerZmanimRoute({
+  router,
+  downloadRecording,
+  transcribeSpeech,
+  incomingApiParam,
+  callerPhone,
+  saveLastSearch,
+  saveSearch,
+  getSavedSearches
+});
+registerLastZmanimRoute(router, {
+  callerPhone,
+  getLastSearch
+});
 app.use('/',router);
 
 function auth(req,res,next){
@@ -511,13 +514,25 @@ process.on('uncaughtException',e=>{if(!(e instanceof ExitError))console.error(e)
 
 const port=process.env.PORT||3000;
 app.listen(port,()=>{ 
-  console.log('Server running on port '+port); 
-  disableYemotWaitMusic(); 
+  console.log('Server running on port '+port);
+  configureLegacyVoice();
+
+  const zmanimConfig = {
+    token:process.env.ZMANIM_YEMOT_TOKEN,
+    publicUrl:process.env.ZMANIM_PUBLIC_URL || process.env.PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL
+  };
+
   configureZmanimExtension({
-    token: process.env.ZMANIM_YEMOT_TOKEN,
-    publicUrl: process.env.ZMANIM_PUBLIC_URL || process.env.PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL,
-    extension: process.env.ZMANIM_EXTENSION || '1'
-  }).catch(e=>console.error('[ZMANIM_CONFIG_FATAL]',e?.message||e));
+    ...zmanimConfig,
+    extension:'1',
+    apiPath:'/yemot/zmanim'
+  }).catch(e=>console.error('[ZMANIM_CONFIG_FATAL_1]',e?.message||e));
+
+  configureZmanimExtension({
+    ...zmanimConfig,
+    extension:'3',
+    apiPath:'/yemot/zmanim/last'
+  }).catch(e=>console.error('[ZMANIM_CONFIG_FATAL_3]',e?.message||e));
 
 
 });
