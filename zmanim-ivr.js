@@ -519,6 +519,123 @@ function parseCombinedLocation(text) {
   return null;
 }
 
+function callReadValue(result) {
+  return cleanText(
+    typeof result === 'string'
+      ? result
+      : result?.value ?? result?.val ?? ''
+  );
+}
+
+function formatMinyanForPhone(item, number) {
+  const context = cleanText(item?.context || '').slice(0, 110);
+  const contextText = context ? ', ' + context : '';
+  return `מניין ${number}: ${item.type}, בשעה ${hebrewTimeSpeech(item.time)}${contextText}.`;
+}
+
+async function selectMinyan(call, data) {
+  const items = Array.isArray(data?.items) ? data.items : [];
+  if (!items.length) {
+    return await call.id_list_message([
+      {type:'text', data:'לא נמצאו מניינים קרובים עבור ' + cleanText(data?.location || '') + '.'}
+    ]);
+  }
+
+  const pageSize = 8;
+  let page = 0;
+
+  while (true) {
+    const startIndex = page * pageSize;
+    const pageItems = items.slice(startIndex, startIndex + pageSize);
+    if (!pageItems.length) {
+      page = 0;
+      continue;
+    }
+
+    const menuParts = [
+      `מצאתי ${items.length} מניינים קרובים עבור ${cleanText(data.location)}.`
+    ];
+
+    pageItems.forEach((item, index) => {
+      menuParts.push(formatMinyanForPhone(item, index + 1));
+      menuParts.push(`לבחירת מניין ${index + 1} הקישו ${index + 1}.`);
+    });
+
+    const hasNext = startIndex + pageItems.length < items.length;
+    const hasPrevious = page > 0;
+
+    if (hasNext) {
+      menuParts.push('למניינים נוספים הקישו 9.');
+    }
+    if (hasPrevious) {
+      menuParts.push('לחזרה למניינים הקודמים הקישו 0.');
+    }
+
+    const choice = callReadValue(await call.read(
+      [{type:'text', data:cleanText(menuParts.join(' '))}],
+      'tap',
+      {
+        val_name: 'minyan_choice_page_' + page,
+        max_digits: 1,
+        min_digits: 1,
+        sec_wait: 20,
+        empty_val: 'None',
+        typing_playback_mode: 'Number',
+        block_change_keyboard: true,
+        block_asterisk_key: true
+      }
+    ));
+
+    if (choice === '9' && hasNext) {
+      page += 1;
+      continue;
+    }
+
+    if (choice === '0' && hasPrevious) {
+      page -= 1;
+      continue;
+    }
+
+    const selectedNumber = Number(choice);
+    if (Number.isInteger(selectedNumber) && selectedNumber >= 1 && selectedNumber <= pageItems.length) {
+      const selected = pageItems[selectedNumber - 1];
+      const detail = [
+        'בחרתם ב' + formatMinyanForPhone(selected, selectedNumber),
+        'עבור ' + cleanText(data.location) + '.',
+        'לשמיעת הרשימה מחדש הקישו 1. לחיפוש חדש הקישו 2.'
+      ].join(' ');
+
+      const afterChoice = callReadValue(await call.read(
+        [{type:'text', data:cleanText(detail)}],
+        'tap',
+        {
+          val_name: 'selected_minyan_action_page_' + page,
+          max_digits: 1,
+          min_digits: 1,
+          sec_wait: 15,
+          empty_val: 'None',
+          typing_playback_mode: 'Number',
+          block_change_keyboard: true,
+          block_asterisk_key: true
+        }
+      ));
+
+      if (afterChoice === '1') {
+        page = 0;
+        continue;
+      }
+
+      if (afterChoice === '2') {
+        return null;
+      }
+
+      return await call.id_list_message([
+        {type:'text', data:cleanText(formatMinyanForPhone(selected, selectedNumber))}
+      ]);
+    }
+  }
+}
+
 export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech, incomingApiParam}) {
   router.all('/yemot/zmanim', async call => {
     try {
@@ -529,7 +646,7 @@ export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech
       let location = '';
 
       for (let attempt = 0; attempt < 3 && !location; attempt++) {
-        const method = await call.read(
+        const method = callReadValue(await call.read(
           [{type:'text', data:
             welcome +
             ' כדי להקליט בהקלטה אחת את היישוב ואת הרחוב הקישו 1. כדי להקליד את היישוב ואת הרחוב במקלדת עברית הקישו 2.'
@@ -545,14 +662,10 @@ export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech
             block_change_keyboard: true,
             block_asterisk_key: true
           }
-        );
+        ));
 
-        const methodValue = cleanText(
-          typeof method === 'string' ? method : method?.value ?? method?.val ?? ''
-        );
-
-        if (methodValue === '2') {
-          const typed = await call.read(
+        if (method === '2') {
+          const typedText = callReadValue(await call.read(
             [{type:'text', data:
               'הקלידו במקלדת עברית את שם היישוב ואת שם הרחוב יחד. בסיום ההקלדה הקישו סולמית.'
             }],
@@ -567,20 +680,12 @@ export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech
               block_change_keyboard: true,
               block_asterisk_key: false
             }
-          );
+          ));
 
-          const typedText = cleanText(
-            typeof typed === 'string' ? typed : typed?.value ?? typed?.val ?? ''
-          );
-
-          console.log('[ZMANIM_TYPED_LOCATION]', JSON.stringify({
-            value: typedText
-          }));
+          console.log('[ZMANIM_TYPED_LOCATION]', JSON.stringify({value: typedText}));
 
           if (!typedText || typedText.length < 2) {
-            console.warn('[ZMANIM_TYPED_INPUT_EMPTY]', JSON.stringify({
-              attempt: attempt + 1
-            }));
+            console.warn('[ZMANIM_TYPED_INPUT_EMPTY]', JSON.stringify({attempt: attempt + 1}));
             continue;
           }
 
@@ -589,7 +694,7 @@ export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech
             source: 'keyboard',
             location
           }));
-        } else if (methodValue === '1') {
+        } else if (method === '1') {
           const prompt =
             attempt === 0
               ? 'הקליטו עכשיו בהקלטה אחת את שם היישוב ואת שם הרחוב. לאחר מכן לחצו סולמית.'
@@ -647,11 +752,11 @@ export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech
           continue;
         }
 
-        const confirmationText = methodValue === '2'
+        const confirmationText = method === '2'
           ? 'שמעתי: ' + location + '. להמשיך הקישו 1. להזין מחדש הקישו 2.'
           : 'שמעתי: יישוב ' + address.city + ', רחוב ' + address.street + '. להמשיך הקישו 1. להזין מחדש הקישו 2.';
 
-        const answer = await call.read(
+        const answerValue = callReadValue(await call.read(
           [{type:'text', data:confirmationText}],
           'tap',
           {
@@ -664,11 +769,7 @@ export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech
             block_change_keyboard: true,
             block_asterisk_key: false
           }
-        );
-
-        const answerValue = cleanText(
-          typeof answer === 'string' ? answer : answer?.value ?? answer?.val ?? ''
-        );
+        ));
 
         if (answerValue === '2') {
           address = null;
@@ -679,33 +780,59 @@ export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech
         if (!location && address) {
           location = cleanText(address.city + ' ' + address.street);
         }
+
         console.log('[ZMANIM_LOCATION_TRANSCRIBED]', JSON.stringify({
           source: 'recording_or_keyboard',
           location
         }));
 
+        if (!location) {
+          throw new Error('לא התקבל מקום לחיפוש');
+        }
+
+        // Return a short status prompt before starting the slow external search.
+        await call.read(
+          [{type:'text', data:'רק רגע, אני מחפש את המניינים הקרובים.'}],
+          'tap',
+          {
+            val_name: 'zmanim_search_notice_' + attempt,
+            max_digits: 1,
+            min_digits: 1,
+            sec_wait: 1,
+            empty_val: 'None',
+            typing_playback_mode: 'Number',
+            block_change_keyboard: true,
+            block_asterisk_key: true
+          }
+        );
+
         const result = await fetchNedarimZmanim(location);
-        const message = formatZmanimForPhone(result);
 
         console.log('[ZMANIM_RESULT]', JSON.stringify({
-          city: address.city,
-          street: address.street,
+          city: address?.city || null,
+          street: address?.street || null,
           location,
-          source: methodValue === '2' ? 'keyboard' : 'recording',
+          source: method === '2' ? 'keyboard' : 'recording',
           count: result.items?.length || 0
         }));
 
-        return await call.id_list_message([
-          {type:'text', data:message}
-        ]);
+        const selectedResult = await selectMinyan(call, result);
+        if (selectedResult === null) {
+          // After the selection menu, key 2 requests a completely new search.
+          address = null;
+          location = '';
+          continue;
+        }
+
+        return selectedResult;
       }
 
-      throw new Error('לא ניתן היה לזהות יישוב ורחוב');
+      throw new Error('לא ניתן היה לזהות מקום לחיפוש');
     } catch (error) {
       console.error('[ZMANIM_IVR_ERROR]', error?.stack || error);
       try {
         return await call.id_list_message([
-          {type:'text', data:'מצטערים, לא הצלחתי לקבל כרגע את היישוב והרחוב. נסו שוב.'}
+          {type:'text', data:'מצטערים, לא הצלחתי לקבל את המקום או למצוא את המניינים כרגע. נסו שוב.'}
         ]);
       } catch {}
     }
@@ -728,7 +855,7 @@ export async function configureZmanimExtension({token, publicUrl, extension = '1
     api_url_post: 'yes',
     api_wait: 'yes',
     api_wait_play: 'no',
-    api_wait_answer_music_on_hold: 'no',
+    api_wait_answer_music_on_hold: 'yes',
     api_timeout: '90',
     tts_rate: '2',
     rate: '2',
