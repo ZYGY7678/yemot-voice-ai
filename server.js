@@ -2,7 +2,7 @@ import express from 'express';
 import { GoogleGenAI, Modality } from '@google/genai';
 import { YemotRouter, ExitError } from 'yemot-router2';
 import YemotApi from 'yemot-api';
-import { registerZmanimRoute, configureZmanimExtension } from './zmanim-ivr.js';
+import { registerZmanimRoute, configureZmanimExtension, fetchNedarimZmanim, formatZmanimForPhone } from './zmanim-ivr.js';
 
 if (process.loadEnvFile) { try { process.loadEnvFile(); } catch {} }
 
@@ -476,6 +476,7 @@ app.post('/api/test-ai',async(req,res)=>{
     try{s?.session?.close?.()}catch{}
   }
 });
+app.get('/api/test-zmanim',async(req,res)=>{\n  const location=String(req.query?.location||'').trim();\n  if(!location) return res.status(400).json({ok:false,error:'missing location'});\n  const started=Date.now();\n  try{\n    console.log('[TEST_ZMANIM_START]',location);\n    const data=await fetchNedarimZmanim(location);\n    const message=formatZmanimForPhone(data);\n    console.log('[TEST_ZMANIM_OK]',JSON.stringify({location,count:data.items?.length||0,ms:Date.now()-started}));\n    res.json({ok:true,location,count:data.items?.length||0,items:data.items,message,ms:Date.now()-started});\n  }catch(e){\n    console.error('[TEST_ZMANIM_FAIL]',location,e?.stack||e);\n    res.status(500).json({ok:false,location,error:String(e?.message||e),ms:Date.now()-started});\n  }\n});\n
 app.get('/health',(req,res)=>res.json({
   status:'online',
   service:'ai-phone-line',
