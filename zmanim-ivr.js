@@ -580,10 +580,12 @@ async function selectMinyan(call, data, {saveSearch} = {}) {
       page > 0 ? 'לחזרה למניינים הקודמים הקישו 0' : ''
     ].filter(Boolean).join('\\n');
 
-    // First play the complete list, then open DTMF input.
-    // prependToNextAction guarantees the list is actually heard before read starts.
+    // Play the complete list first, then continue with the DTMF choice.
+    // Yemot-router2 requires prependToNextAction for a message that must be
+    // heard before the next read in the same stateful call.
     await call.id_list_message(
-      [{type:'text', data:phoneTtsText(menuText)}]
+      [{type:'text', data:phoneTtsText(menuText)}],
+      {prependToNextAction:true}
     );
 
     const options = [
@@ -754,9 +756,9 @@ async function announceSearchWait(call) {
       val_name:'zmanim_search_notice',
       max_digits:1,
       min_digits:1,
-      sec_wait:0.1,
-      read_none:true,
-      empty_val:'None',
+      sec_wait:0.2,
+      allow_empty:true,
+      empty_val:null,
       typing_playback_mode:'Number',
       block_change_keyboard:true,
       block_asterisk_key:true
@@ -1034,8 +1036,8 @@ function makeHoldMusicWav() {
 }
 
 async function ensureZmanimHoldMusic(token) {
-  const folder='ivr2:/1/hold_music';
-  const name='ZmanimWaitMusic';
+  const folder='ivr2:/1/zmanim_wait_music_v2';
+  const name='ZmanimWaitMusicV2';
   const base='https://www.call2all.co.il/ym/api';
   try{
     const check=await fetch(base+'/GetMusicOnHoldByPath?'+new URLSearchParams({
@@ -1059,7 +1061,7 @@ async function ensureZmanimHoldMusic(token) {
     const upload=await fetch(base+'/UploadFile?'+new URLSearchParams({
       token,
       path:folder+'/zmanim-wait.wav',
-      convertAudio:'0'
+      convertAudio:'1'
     }),{method:'POST',body:form});
     const uploadBody=await upload.text();
     let uploadParsed=null;
@@ -1080,6 +1082,33 @@ async function ensureZmanimHoldMusic(token) {
 
     if(!create.ok||created?.responseStatus&&created.responseStatus!=='OK'){
       throw new Error('CreateMusicOnHolds HTTP '+create.status);
+    }
+
+    const filesCheck=await fetch(base+'/GetIVR2Dir?'+new URLSearchParams({
+      token,
+      path:folder
+    }));
+    const filesBody=await filesCheck.text();
+    let filesParsed=null;
+    try{filesParsed=JSON.parse(filesBody)}catch{}
+    const audioFiles=Array.isArray(filesParsed?.files) ? filesParsed.files : [];
+    const audioFile=audioFiles.find(x => /(?:wav|mp3|ogg|m4a)$/i.test(String(x?.name||''))) || audioFiles[0];
+    if(audioFile?.what){
+      try{
+        const audioResponse=await fetch(base+'/DownloadFile?'+new URLSearchParams({
+          token,
+          path:String(audioFile.what)
+        }));
+        const audioBytes=Buffer.from(await audioResponse.arrayBuffer());
+        console.log('[ZMANIM_HOLD_MUSIC_FILE_VERIFY]',JSON.stringify({
+          ok:audioResponse.ok,
+          name:audioFile.name||'',
+          bytes:audioBytes.length,
+          riff:audioBytes.subarray(0,4).toString('ascii')==='RIFF'
+        }));
+      }catch(e){
+        console.warn('[ZMANIM_HOLD_MUSIC_FILE_VERIFY_FAIL]',e?.message||e);
+      }
     }
 
     const finalCheck=await fetch(base+'/GetMusicOnHoldByPath?'+new URLSearchParams({
@@ -1146,6 +1175,24 @@ export async function configureZmanimExtension({token,publicUrl}={}) {
 
     const response=await fetch('https://www.call2all.co.il/ym/api/UpdateExtension?'+params);
     const body=await response.text();
+
+    if(cfg.path==='ivr2:/1'){
+      try{
+        const extResponse=await fetch('https://www.call2all.co.il/ym/api/GetTextFile?'+new URLSearchParams({
+          token:resolvedToken,
+          what:'ivr2:/1/ext.ini'
+        }));
+        const extBody=await extResponse.text();
+        console.log('[ZMANIM_EXTENSION_VERIFY]',JSON.stringify({
+          status:extResponse.status,
+          musicEnabled:/api_wait_answer_music_on_hold=yes/.test(extBody),
+          hasDifferentMusic:extBody.includes('api_wait_answer_music_on_hold_different='),
+          continuesMusic:/api_wait_answer_music_on_hold_continue_all_sends=yes/.test(extBody)
+        }));
+      }catch(e){
+        console.warn('[ZMANIM_EXTENSION_VERIFY_FAIL]',e?.message||e);
+      }
+    }
     let parsed=body;
     try{parsed=JSON.parse(body)}catch{}
     const ok=response.ok && !(typeof parsed==='string'&&/error|שגיאה/i.test(parsed));
