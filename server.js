@@ -489,7 +489,7 @@ app.get('/',(req,res)=>res.type('html').send("<!doctype html>\n<html lang=\"he\"
 process.on('unhandledRejection',e=>{if(!(e instanceof ExitError))console.error(e)});
 process.on('uncaughtException',e=>{if(!(e instanceof ExitError))console.error(e)});
 
-const port=process.env.PORT||3000;
+async function runZmanimSelfTest(){\n  const tests=['נתיבות יובל 10','בני ברק רבי עקיבא 50','ירושלים יפו 20'];\n  console.log('[SELFTEST_ZMANIM_BEGIN]',JSON.stringify(tests));\n  for(const location of tests){\n    const started=Date.now();\n    try{\n      const data=await fetchNedarimZmanim(location);\n      const message=formatZmanimForPhone(data);\n      console.log('[SELFTEST_ZMANIM_OK]',JSON.stringify({location,count:data.items?.length||0,items:data.items||[],message,ms:Date.now()-started}));\n    }catch(e){\n      console.error('[SELFTEST_ZMANIM_FAIL]',location,e?.message||e);\n    }\n  }\n  console.log('[SELFTEST_ZMANIM_END]');\n}\n\nconst port=process.env.PORT||3000;
 app.listen(port,()=>{ 
   console.log('Server running on port '+port); 
   disableYemotWaitMusic(); 
