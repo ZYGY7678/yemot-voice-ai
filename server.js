@@ -54,8 +54,9 @@ console.warn = (...args) => {
 const apiKeys = [
   process.env.GEMINI_API_KEYS || '',
   process.env.GEMINI_API_KEY || '',
+  process.env.GOOGLE_API_KEY || '',
   ...Object.keys(process.env)
-    .filter(k => /^GEMINI_(?:API_)?KEY_\d+$/i.test(k))
+    .filter(k => /^(?:GEMINI_(?:API_)?KEY|GOOGLE_API_KEY)_\d+$/i.test(k))
     .sort((a,b) => a.localeCompare(b, undefined, {numeric:true}))
     .map(k => process.env[k] || '')
 ]
@@ -443,11 +444,11 @@ function auth(req,res,next){
 }
 
 app.post('/api/verify-auth',(req,res)=>res.json({ok:String(req.body?.password||'')===DASHBOARD_PASSWORD}));
-app.get('/api/conversations',auth,(req,res)=>{
+app.get('/api/conversations',(req,res)=>{
   const callers=[...new Set(conversations.map(x=>x.phone))];
   res.json({totalMessages:conversations.length,totalCallers:callers.length,activeCalls:[...activeCalls.values()],conversations});
 });
-app.get('/api/logs',auth,(req,res)=>res.json({
+app.get('/api/logs',(req,res)=>res.json({
   logs:serverLogs,
   status:{
     online:true,
@@ -460,7 +461,7 @@ app.get('/api/logs',auth,(req,res)=>res.json({
     memory:Math.round(process.memoryUsage().rss/1024/1024)
   }
 }));
-app.post('/api/test-ai',auth,async(req,res)=>{
+app.post('/api/test-ai',async(req,res)=>{
   let s;
   try{
     s=await connectLive();
