@@ -18,8 +18,7 @@ const apiKeys = [
     .sort((a,b) => a.localeCompare(b, undefined, {numeric:true}))
     .map(k => process.env[k] || '')
 ]
-  .flatMap(value => String(value).split(/[,
-;]+/))
+  .flatMap(value => String(value).split(/[,;\\n]+/))
   .map(x => x.trim())
   .filter(Boolean)
   .filter((x,i,arr) => arr.indexOf(x) === i);
