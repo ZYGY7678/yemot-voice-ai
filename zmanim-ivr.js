@@ -579,8 +579,7 @@ async function selectMinyan(call, data, {saveSearch} = {}) {
     // First play the complete list, then open DTMF input.
     // prependToNextAction guarantees the list is actually heard before read starts.
     await call.id_list_message(
-      [{type:'text', data:phoneTtsText(menuText)}],
-      {prependToNextAction:true}
+      [{type:'text', data:phoneTtsText(menuText)}]
     );
 
     const options = [
@@ -965,10 +964,15 @@ export function registerLastZmanimRoute(router, {callerPhone, getLastSearch}) {
 
       return await selectMinyan(call, last);
     } catch (error) {
+      const name=String(error?.name||'');
+      const message=String(error?.message||'');
+      if(/Hangup|Exit/i.test(name+' '+message)) return;
       console.error('[ZMANIM_LAST_ERROR]', error?.stack || error);
-      return await call.id_list_message([
-        {type:'text', data:phoneTtsText('לא הצלחתי לטעון את החיפוש האחרון\nנסו שוב')}
-      ]);
+      try {
+        return await call.id_list_message([
+          {type:'text', data:phoneTtsText('לא הצלחתי לטעון את החיפוש האחרון\nנסו שוב')}
+        ]);
+      } catch {}
     }
   });
 }
