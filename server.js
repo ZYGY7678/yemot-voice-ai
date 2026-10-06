@@ -497,6 +497,18 @@ app.post('/api/test-ai',async(req,res)=>{
     try{s?.session?.close?.()}catch{}
   }
 });
+app.get('/__test_zmanim_server', async (req,res)=> {
+  try {
+    const location = 'נתיבות יובל';
+    console.log('[TEMP_ZMANIM_TEST] location=' + location);
+    const result = await fetchNedarimZmanim(location);
+    res.json({ok:true, location, result});
+  } catch (e) {
+    console.error('[TEMP_ZMANIM_TEST_FAIL]', e?.stack || e);
+    res.status(500).json({ok:false, error:String(e?.message || e)});
+  }
+});
+
 app.get('/health',(req,res)=>res.json({
   status:'online',
   service:'ai-phone-line',
