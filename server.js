@@ -476,7 +476,6 @@ app.post('/api/test-ai',async(req,res)=>{
     try{s?.session?.close?.()}catch{}
   }
 });
-app.get('/api/test-zmanim',async(req,res)=>{\n  const location=String(req.query?.location||'').trim();\n  if(!location) return res.status(400).json({ok:false,error:'missing location'});\n  const started=Date.now();\n  try{\n    console.log('[TEST_ZMANIM_START]',location);\n    const data=await fetchNedarimZmanim(location);\n    const message=formatZmanimForPhone(data);\n    console.log('[TEST_ZMANIM_OK]',JSON.stringify({location,count:data.items?.length||0,ms:Date.now()-started}));\n    res.json({ok:true,location,count:data.items?.length||0,items:data.items,message,ms:Date.now()-started});\n  }catch(e){\n    console.error('[TEST_ZMANIM_FAIL]',location,e?.stack||e);\n    res.status(500).json({ok:false,location,error:String(e?.message||e),ms:Date.now()-started});\n  }\n});\n
 app.get('/health',(req,res)=>res.json({
   status:'online',
   service:'ai-phone-line',
@@ -489,7 +488,29 @@ app.get('/',(req,res)=>res.type('html').send("<!doctype html>\n<html lang=\"he\"
 process.on('unhandledRejection',e=>{if(!(e instanceof ExitError))console.error(e)});
 process.on('uncaughtException',e=>{if(!(e instanceof ExitError))console.error(e)});
 
-async function runZmanimSelfTest(){\n  const tests=['נתיבות יובל 10','בני ברק רבי עקיבא 50','ירושלים יפו 20'];\n  console.log('[SELFTEST_ZMANIM_BEGIN]',JSON.stringify(tests));\n  for(const location of tests){\n    const started=Date.now();\n    try{\n      const data=await fetchNedarimZmanim(location);\n      const message=formatZmanimForPhone(data);\n      console.log('[SELFTEST_ZMANIM_OK]',JSON.stringify({location,count:data.items?.length||0,items:data.items||[],message,ms:Date.now()-started}));\n    }catch(e){\n      console.error('[SELFTEST_ZMANIM_FAIL]',location,e?.message||e);\n    }\n  }\n  console.log('[SELFTEST_ZMANIM_END]');\n}\n\nconst port=process.env.PORT||3000;
+async function runZmanimSelfTest(){
+  const tests=['נתיבות יובל 10','בני ברק רבי עקיבא 50','ירושלים יפו 20'];
+  console.log('[SELFTEST_ZMANIM_BEGIN]',JSON.stringify(tests));
+  for(const location of tests){
+    const started=Date.now();
+    try{
+      const data=await fetchNedarimZmanim(location);
+      const message=formatZmanimForPhone(data);
+      console.log('[SELFTEST_ZMANIM_OK]',JSON.stringify({
+        location,
+        count:data.items?.length||0,
+        items:data.items||[],
+        message,
+        ms:Date.now()-started
+      }));
+    }catch(e){
+      console.error('[SELFTEST_ZMANIM_FAIL]',location,e?.message||e);
+    }
+  }
+  console.log('[SELFTEST_ZMANIM_END]');
+}
+
+const port=process.env.PORT||3000;
 app.listen(port,()=>{ 
   console.log('Server running on port '+port); 
   disableYemotWaitMusic(); 
@@ -499,3 +520,5 @@ app.listen(port,()=>{
     extension: process.env.ZMANIM_EXTENSION || '1'
   }).catch(e=>console.error('[ZMANIM_CONFIG_FATAL]',e?.message||e));
 });
+
+setTimeout(()=>runZmanimSelfTest().catch(e=>console.error('[SELFTEST_ZMANIM_FATAL]',e?.message||e)),1500);
