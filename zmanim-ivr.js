@@ -254,6 +254,57 @@ export function formatZmanimForPhone(data) {
   return cleanText(parts.join(' '));
 }
 
+export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech}) {
+  router.all('/yemot/zmanim', async call => {
+    try {
+      const recordPath = await call.read(
+        [{type:'text', data:'ברוכים הבאים למערכת זמני התפילות. אנא אמרו עכשיו בקול את שם היישוב או הכתובת שבה אתם גרים, ולאחר מכן המתינו.'}],
+        'record',
+        {
+          min_length: 1,
+          max_length: 15,
+          no_confirm_menu: true,
+          save_on_hangup: false
+        }
+      );
+
+      if (!recordPath) return;
+
+      const audio = await downloadRecording(String(recordPath));
+      const location = cleanText(await transcribeSpeech(audio));
+
+      if (!location) {
+        await call.id_list_message([
+          {type:'text', data:'לא הצלחתי להבין את שם היישוב. אנא נסו שוב.'}
+        ], {prependToNextAction:true});
+        return;
+      }
+
+      console.log('[ZMANIM_LOCATION]', location);
+
+      const result = await fetchNedarimZmanim(location);
+      const message = formatZmanimForPhone(result);
+
+      console.log('[ZMANIM_RESULT]', JSON.stringify({
+        location,
+        count: result.items?.length || 0
+      }));
+
+      await call.id_list_message(
+        [{type:'text', data:message}],
+        {prependToNextAction:true}
+      );
+    } catch (error) {
+      console.error('[ZMANIM_IVR_ERROR]', error?.stack || error);
+      try {
+        await call.id_list_message([
+          {type:'text', data:'מצטערים, לא הצלחתי לקבל כרגע את זמני התפילות. נסו שוב בעוד רגע.'}
+        ], {prependToNextAction:true});
+      } catch {}
+    }
+  });
+}
+
 export async function configureZmanimExtension({token, publicUrl, extension = '1'} = {}) {
   const resolvedToken = String(token || process.env.ZMANIM_YEMOT_TOKEN || '').trim();
   const base = String(publicUrl || process.env.ZMANIM_PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || '').replace(/\/$/, '');
