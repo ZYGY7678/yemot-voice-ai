@@ -10,6 +10,47 @@ const app = express();
 app.use(express.urlencoded({extended:true}));
 app.use(express.json());
 
+const serverLogs = [];
+const MAX_SERVER_LOGS = 250;
+const originalConsoleLog = console.log.bind(console);
+const originalConsoleError = console.error.bind(console);
+
+function formatLogArg(value) {
+  if (value instanceof Error) return value.stack || value.message || String(value);
+  if (typeof value === 'string') return value;
+  try { return JSON.stringify(value); } catch { return String(value); }
+}
+
+function redactLog(text) {
+  return String(text || '')
+    .replace(/(?:token|api[_-]?key|password|secret)[=:][^\\s,}]+/gi, '$1=••••••')
+    .replace(/05\\d{8}/g, m => m.slice(0,3) + '•••••' + m.slice(-2));
+}
+
+function pushServerLog(level, args) {
+  const message = redactLog(args.map(formatLogArg).join(' ')).slice(0, 1200);
+  serverLogs.unshift({
+    id: Date.now() + Math.random().toString(16).slice(2),
+    time: new Date().toISOString(),
+    level,
+    message
+  });
+  if (serverLogs.length > MAX_SERVER_LOGS) serverLogs.length = MAX_SERVER_LOGS;
+}
+
+console.log = (...args) => {
+  pushServerLog('info', args);
+  originalConsoleLog(...args);
+};
+console.error = (...args) => {
+  pushServerLog('error', args);
+  originalConsoleError(...args);
+};
+console.warn = (...args) => {
+  pushServerLog('warn', args);
+  originalConsoleLog(...args);
+};
+
 const apiKeys = [
   process.env.GEMINI_API_KEYS || '',
   process.env.GEMINI_API_KEY || '',
@@ -406,7 +447,19 @@ app.get('/api/conversations',auth,(req,res)=>{
   const callers=[...new Set(conversations.map(x=>x.phone))];
   res.json({totalMessages:conversations.length,totalCallers:callers.length,activeCalls:[...activeCalls.values()],conversations});
 });
-app.get('/api/logs',auth,(req,res)=>res.json({logs:[]}));
+app.get('/api/logs',auth,(req,res)=>res.json({
+  logs:serverLogs,
+  status:{
+    online:true,
+    geminiConfigured:apiKeys.length>0,
+    geminiKeys:apiKeys.length,
+    liveModel:LIVE_MODEL,
+    audioModels:AUDIO_MODELS,
+    activeCalls:activeCalls.size,
+    uptime:Math.floor(process.uptime()),
+    memory:Math.round(process.memoryUsage().rss/1024/1024)
+  }
+}));
 app.post('/api/test-ai',auth,async(req,res)=>{
   let s;
   try{
@@ -429,7 +482,7 @@ app.get('/health',(req,res)=>res.json({
   geminiConfigured:apiKeys.length>0,
   yemotConfigured:Boolean(process.env.YEMOT_API_KEY)
 }));
-app.get('/',(req,res)=>res.type('html').send('<!doctype html><html lang="he" dir="rtl"><meta charset="utf-8"><title>AI Phone Line</title><style>body{font-family:Arial;background:#0b1220;color:#fff;max-width:900px;margin:40px auto;padding:20px}.card{background:#111c30;padding:20px;border-radius:14px;margin:12px 0}input,button{padding:10px;margin:5px}</style><div class="card"><h1>קו טלפון אישי עם בינה מלאכותית</h1><p>Gemini 3.8 Live + ימות המשיח</p><p><a href="/health" style="color:#6cf">בדיקת שרת</a></p></div></html>'));
+app.get('/',(req,res)=>res.type('html').send("<!doctype html>\n<html lang=\"he\" dir=\"rtl\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<title>מרכז השליטה • קו AI</title>\n<style>\n:root{font-family:Arial,Heebo,sans-serif;color-scheme:dark}\n*{box-sizing:border-box}\nbody{margin:0;background:radial-gradient(circle at top,#17253f 0,#090e18 48%,#050810 100%);color:#eef3ff;min-height:100vh}\n.wrap{max-width:1200px;margin:auto;padding:22px}\n.top{display:flex;gap:14px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:18px}\n.brand{display:flex;gap:13px;align-items:center}\n.logo{width:48px;height:48px;border-radius:16px;background:linear-gradient(135deg,#2f80ed,#22c55e);display:grid;place-items:center;font-size:23px;box-shadow:0 8px 28px #0006}\nh1{font-size:23px;margin:0 0 4px}.sub{color:#9eabc2;font-size:13px}\n.actions{display:flex;gap:8px}.btn{border:1px solid #27344c;background:#111a2b;color:#eaf1ff;padding:10px 14px;border-radius:11px;cursor:pointer}.btn:hover{background:#16233a}\n.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:11px}\n.card{background:#0f1728cc;border:1px solid #1f2b40;border-radius:16px;padding:15px;box-shadow:0 10px 34px #0003;backdrop-filter:blur(8px)}\n.k{font-size:12px;color:#99a8c1;margin-bottom:8px}.v{font-size:22px;font-weight:700}.ok{color:#50e38d}.bad{color:#ff6b7d}.muted{color:#8998b2}\n.main{display:grid;grid-template-columns:1.4fr .9fr;gap:12px;margin-top:12px}\n.title{font-weight:700;font-size:15px;margin-bottom:10px}\n.logbox{height:500px;overflow:auto;background:#080d16;border:1px solid #182238;border-radius:12px;padding:8px}\n.log{display:grid;grid-template-columns:72px 58px 1fr;gap:8px;padding:9px 7px;border-bottom:1px solid #121c2e;font:12px ui-monospace,SFMono-Regular,Menlo,monospace}\n.log:last-child{border-bottom:0}.time{color:#72819b}.info{color:#64a5ff}.warn{color:#ffd166}.error{color:#ff6578}\n.active{display:flex;flex-direction:column;gap:9px}\n.call{border:1px solid #203149;background:#0b1322;border-radius:12px;padding:12px}\n.row{display:flex;justify-content:space-between;gap:10px;margin:6px 0;font-size:13px}.pill{padding:4px 8px;border-radius:999px;background:#163322;color:#63e28f;font-size:11px}\n.empty{padding:30px;text-align:center;color:#70809a}\n.footer{text-align:center;color:#64748b;font-size:11px;margin:16px 0}\n.auth{display:none;position:fixed;inset:0;background:#050810ee;align-items:center;justify-content:center;z-index:5}\n.auth .card{width:min(390px,92vw)}input{width:100%;padding:12px;border-radius:10px;border:1px solid #2b3951;background:#09111e;color:#fff;margin:10px 0}\n@media(max-width:900px){.grid{grid-template-columns:repeat(2,1fr)}.main{grid-template-columns:1fr}.logbox{height:420px}}\n@media(max-width:520px){.wrap{padding:13px}.grid{grid-template-columns:1fr 1fr}.v{font-size:19px}.log{grid-template-columns:58px 45px 1fr;font-size:10px}}\n</style>\n</head>\n<body>\n<div class=\"wrap\">\n  <div class=\"top\">\n    <div class=\"brand\">\n      <div class=\"logo\">☎</div>\n      <div><h1>מרכז השליטה • קו AI</h1><div class=\"sub\">מעקב חי אחרי השרת, ימות המשיח ו־Gemini</div></div>\n    </div>\n    <div class=\"actions\"><button class=\"btn\" onclick=\"refreshAll()\">↻ רענן</button><button class=\"btn\" onclick=\"showAuth()\">🔐 מפתח</button></div>\n  </div>\n\n  <div class=\"grid\">\n    <div class=\"card\"><div class=\"k\">שרת</div><div class=\"v\" id=\"serverState\">בודק...</div></div>\n    <div class=\"card\"><div class=\"k\">Gemini</div><div class=\"v\" id=\"geminiState\">בודק...</div></div>\n    <div class=\"card\"><div class=\"k\">מפתחות זמינים</div><div class=\"v\" id=\"keyCount\">—</div></div>\n    <div class=\"card\"><div class=\"k\">שיחות פעילות</div><div class=\"v\" id=\"callCount\">—</div></div>\n  </div>\n\n  <div class=\"main\">\n    <div class=\"card\">\n      <div class=\"title\">📡 לוג מערכת חי</div>\n      <div class=\"logbox\" id=\"logs\"><div class=\"empty\">מתחבר ללוגים...</div></div>\n    </div>\n    <div class=\"card\">\n      <div class=\"title\">📞 מה קורה כעת</div>\n      <div class=\"active\" id=\"activeCalls\"><div class=\"empty\">אין שיחות פעילות כרגע</div></div>\n      <div class=\"title\" style=\"margin-top:18px\">⚙️ פרטי מערכת</div>\n      <div id=\"details\" class=\"muted\" style=\"font-size:13px;line-height:1.9\">—</div>\n    </div>\n  </div>\n\n  <div class=\"footer\">AI Phone Line • Live Dashboard • עדכון אוטומטי כל 2 שניות</div>\n</div>\n\n<div class=\"auth\" id=\"authBox\">\n  <div class=\"card\">\n    <div class=\"title\">🔐 מפתח לוגים</div>\n    <div class=\"muted\" style=\"font-size:12px\">הזן את DASHBOARD_PASSWORD שמוגדר ב־Render</div>\n    <input id=\"keyInput\" type=\"password\" placeholder=\"מפתח\">\n    <button class=\"btn\" style=\"width:100%\" onclick=\"saveKey()\">כניסה</button>\n  </div>\n</div>\n\n<script>\nlet key=localStorage.getItem('dashboardKey')||'';\nfunction showAuth(){document.getElementById('authBox').style.display='flex';document.getElementById('keyInput').focus()}\nfunction saveKey(){key=document.getElementById('keyInput').value.trim();localStorage.setItem('dashboardKey',key);document.getElementById('authBox').style.display='none';refreshAll()}\nfunction esc(s){return String(s??'').replace(/[&<>\"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[m]))}\nfunction fmtTime(x){try{return new Date(x).toLocaleTimeString('he-IL',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}catch{return ''}}\nasync function getJson(url){\n  const r=await fetch(url,{headers:{'x-dashboard-key':key}});\n  if(r.status===401){showAuth();throw new Error('unauthorized')}\n  if(!r.ok)throw new Error('HTTP '+r.status);\n  return r.json();\n}\nasync function refreshAll(){\n  try{\n    const [health,logs]=await Promise.all([fetch('/health').then(r=>r.json()),getJson('/api/logs')]);\n    document.getElementById('serverState').innerHTML='<span class=\"ok\">● ONLINE</span>';\n    document.getElementById('geminiState').innerHTML=health.geminiConfigured?'<span class=\"ok\">● מחובר</span>':'<span class=\"bad\">● לא מוגדר</span>';\n    document.getElementById('keyCount').textContent=logs.status.geminiKeys;\n    document.getElementById('callCount').textContent=logs.status.activeCalls;\n    document.getElementById('details').innerHTML=\n      'מודל Live: <b>'+esc(logs.status.liveModel)+'</b><br>'+\n      'מודלי אודיו: <b>'+esc(logs.status.audioModels.join(' • '))+'</b><br>'+\n      'זמן פעילות: <b>'+esc(uptime(logs.status.uptime))+'</b><br>'+\n      'זיכרון: <b>'+esc(logs.status.memory)+'MB</b>';\n    const box=document.getElementById('logs');\n    box.innerHTML=logs.logs.map(l=>'<div class=\"log\"><span class=\"time\">'+fmtTime(l.time)+'</span><span class=\"'+l.level+'\">'+esc(l.level.toUpperCase())+'</span><span>'+esc(l.message)+'</span></div>').join('')||'<div class=\"empty\">אין לוגים עדיין</div>';\n    if(logs.logs.length)box.scrollTop=0;\n    renderCalls(logs.status.activeCalls);\n  }catch(e){\n    document.getElementById('serverState').innerHTML='<span class=\"bad\">● שגיאה</span>';\n  }\n}\nfunction uptime(sec){sec=Number(sec)||0;const h=Math.floor(sec/3600),m=Math.floor(sec%3600/60),s=sec%60;return (h?h+'ש ':'')+(m?m+'ד ':'')+s+'ש'}\nfunction renderCalls(count){\n  const box=document.getElementById('activeCalls');\n  if(!count){box.innerHTML='<div class=\"empty\">אין שיחות פעילות כרגע</div>';return}\n  box.innerHTML='<div class=\"call\"><div class=\"row\"><span>שיחה פעילה</span><span class=\"pill\">LIVE</span></div><div class=\"row\"><span>מצב</span><b>השרת מטפל בשיחה</b></div></div>';\n}\nsetInterval(refreshAll,2000);refreshAll();\n</script>\n</body>\n</html>"));
 
 process.on('unhandledRejection',e=>{if(!(e instanceof ExitError))console.error(e)});
 process.on('uncaughtException',e=>{if(!(e instanceof ExitError))console.error(e)});
