@@ -5,7 +5,7 @@ import path from 'node:path';
 import { GoogleGenAI, Modality, createUserContent, createPartFromUri } from '@google/genai';
 import { YemotRouter, ExitError } from 'yemot-router2';
 import YemotApi from 'yemot-api';
-import { registerZmanimRoute, registerLastZmanimRoute, configureZmanimExtension, fetchNedarimZmanim } from './zmanim-ivr.js';
+import { registerZmanimRoute, registerSavedZmanimRoute, registerLastZmanimRoute, configureZmanimExtension, fetchNedarimZmanim } from './zmanim-ivr.js';
 import { saveLastSearch, saveSearch, getSavedSearches, getLastSearch } from './zmanim-search-store.js';
 
 if (process.loadEnvFile) { try { process.loadEnvFile(); } catch {} }
@@ -443,6 +443,42 @@ async function callHandler(call) {
   }
 }
 
+router.all('/yemot/main-menu', async call => {
+  try {
+    const choice=String(await call.read(
+      [{
+        type:'text',
+        data:
+          'שלום, הגעתם לקו המניין הקרוב אליך של נדרים פלוס, פותח על ידי חייא שיאומי ממתמחים טופ,' +
+          '\nלחיפוש מניינים לפי יישוב ורחוב הקישו 1,' +
+          '\nלרשימת החיפושים השמורים שלכם הקישו 2,' +
+          '\nלחיפוש האחרון שלכם הקישו 3'
+      }],
+      'tap',
+      {
+        val_name:'main_menu_choice',
+        max_digits:1,
+        min_digits:1,
+        sec_wait:20,
+        empty_val:'None',
+        digits_allowed:[1,2,3],
+        typing_playback_mode:'Number',
+        block_change_keyboard:true,
+        block_asterisk_key:true
+      }
+    )||'').trim();
+
+    if(choice==='1') return await call.go_to_folder('/1');
+    if(choice==='2') return await call.go_to_folder('/2');
+    if(choice==='3') return await call.go_to_folder('/3');
+    return await call.go_to_folder('/');
+  }catch(error){
+    if(error instanceof ExitError) throw error;
+    console.error('[MAIN_MENU_ERROR]',error?.stack||error);
+    return await call.go_to_folder('/');
+  }
+});
+
 router.all('/yemot',callHandler);
 registerZmanimRoute({
   router,
@@ -451,11 +487,14 @@ registerZmanimRoute({
   incomingApiParam,
   callerPhone,
   saveLastSearch,
-  saveSearch,
-  getSavedSearches,
-  getLastSearch
+  saveSearch
 });
-registerLastZmanimRoute(router, {
+registerSavedZmanimRoute(router,{
+  callerPhone,
+  getSavedSearches,
+  saveLastSearch
+});
+registerLastZmanimRoute(router,{
   callerPhone,
   getLastSearch
 });
@@ -514,27 +553,12 @@ process.on('unhandledRejection',e=>{if(!(e instanceof ExitError))console.error(e
 process.on('uncaughtException',e=>{if(!(e instanceof ExitError))console.error(e)});
 
 const port=process.env.PORT||3000;
-app.listen(port,()=>{ 
+app.listen(port,()=>{
   console.log('Server running on port '+port);
   configureLegacyVoice();
 
-  const zmanimConfig = {
+  configureZmanimExtension({
     token:process.env.ZMANIM_YEMOT_TOKEN,
     publicUrl:process.env.ZMANIM_PUBLIC_URL || process.env.PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL
-  };
-
-  configureZmanimExtension({
-    ...zmanimConfig,
-    extension:'1',
-    apiPath:'/yemot/zmanim'
-  }).catch(e=>console.error('[ZMANIM_CONFIG_FATAL_1]',e?.message||e));
-
-  configureZmanimExtension({
-    ...zmanimConfig,
-    extension:'3',
-    apiPath:'/yemot/zmanim/last'
-  }).catch(e=>console.error('[ZMANIM_CONFIG_FATAL_3]',e?.message||e));
-
-
+  }).catch(e=>console.error('[ZMANIM_CONFIG_FATAL]',e?.message||e));
 });
-
