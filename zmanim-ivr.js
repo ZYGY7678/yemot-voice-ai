@@ -171,6 +171,23 @@ async function trySearchButtons(page) {
   return clicked;
 }
 
+async function geocodeLocation(location) {
+  const url = 'https://nominatim.openstreetmap.org/search?' + new URLSearchParams({
+    format: 'jsonv2',
+    limit: '1',
+    countrycodes: 'il',
+    q: location
+  });
+  const response = await fetch(url, {
+    headers: {'User-Agent': 'yemot-voice-ai/1.0'}
+  });
+  if (!response.ok) throw new Error('Geocoding HTTP ' + response.status);
+  const rows = await response.json();
+  const row = Array.isArray(rows) ? rows[0] : null;
+  if (!row?.lat || !row?.lon) throw new Error('לא נמצאו קואורדינטות לכתובת');
+  return {lat:Number(row.lat), lng:Number(row.lon), displayName:cleanText(row.display_name || location)};
+}
+
 export async function fetchNedarimZmanim(locationText) {
   const location = cleanText(locationText);
   if (!location) throw new Error('לא התקבל מקום מגורים');
@@ -194,6 +211,53 @@ export async function fetchNedarimZmanim(locationText) {
     await page.setUserAgent(
       'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131 Safari/537.36'
     );
+
+    // Preferred path: geocode the typed address and open Nedarim's public result page directly.
+    try {
+      const geo = await geocodeLocation(location);
+      const resultUrl = ZMANIM_URL.replace(/\/$/, '') +
+        '/result.html?radius=5&lat=' + encodeURIComponent(geo.lat) +
+        '&lng=' + encodeURIComponent(geo.lng);
+      console.log('[ZMANIM_DIRECT_SEARCH]', JSON.stringify({location, displayName:geo.displayName, resultUrl}));
+
+      await page.goto(resultUrl, {
+        waitUntil: 'domcontentloaded',
+        timeout: 35000
+      });
+      await new Promise(r => setTimeout(r, 5000));
+
+      const directText = await page.evaluate(() => document.body?.innerText || '');
+      const directExtracted = parseTimesFromText(directText);
+      const now = nowInIsrael();
+      const directFuture = directExtracted.map(x => {
+        const [h,m] = x.time.split(':').map(Number);
+        const minutes=h*60+m;
+        const delta=minutes>=now ? minutes-now : minutes+1440-now;
+        return {...x,delta};
+      });
+      const directFiltered = dedupe(directFuture)
+        .sort((a,b)=>a.delta-b.delta || scoreResult(a)-scoreResult(b))
+        .slice(0,10);
+
+      console.log('[ZMANIM_DIRECT_RESULT]', JSON.stringify({
+        location,
+        textLength:directText.length,
+        count:directFiltered.length,
+        items:directFiltered,
+        preview:cleanText(directText).slice(0,1200)
+      }));
+
+      if (directFiltered.length) {
+        return {
+          location,
+          source: resultUrl,
+          fetchedAt: new Date().toISOString(),
+          items: directFiltered
+        };
+      }
+    } catch (e) {
+      console.error('[ZMANIM_DIRECT_FAIL]', location, e?.message || e);
+    }
 
     await page.goto(ZMANIM_URL, {
       waitUntil: 'domcontentloaded',
