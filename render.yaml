@@ -3,7 +3,7 @@ services:
     name: ai-phone-line-branch3
     runtime: node
     plan: free
-    buildCommand: npm install
+    buildCommand: npm install && npx puppeteer browsers install chrome
     startCommand: npm start
     envVars:
       - key: NODE_VERSION
@@ -24,3 +24,5 @@ services:
         value: "20000"
       - key: PUBLIC_BASE_URL
         sync: false
+      - key: PUPPETEER_CACHE_DIR
+        value: /opt/render/project/.cache/puppeteer
