@@ -482,20 +482,38 @@ export function registerZmanimRoute(router, {downloadRecording}) {
       const welcome = 'שלום, הגעתם לקו המניין הקרוב אליך של נדרים פלוס. פותח על ידי חייא שיאומי ממתמחים טופ.';
 
       const readVoiceText = async (prompt, valName) => {
-        const value = await call.read(
+        const recordPath = await call.read(
           [{type:'text', data:prompt}],
-          'stt',
+          'record',
           {
-            val_name: valName,
-            max_digits: '*',
-            min_digits: 1,
-            sec_wait: 15,
-            empty_val: 'None',
-            block_change_keyboard: true,
-            block_asterisk_key: false
+            min_length: 1,
+            max_length: 10,
+            no_confirm_menu: true,
+            save_on_hangup: false
           }
         );
-        return cleanText(value);
+
+        if (!recordPath) throw new Error('לא התקבלה הקלטה עבור ' + valName);
+
+        const started = Date.now();
+        const audio = await downloadRecording(String(recordPath));
+        console.log('[ZMANIM_RECORDING_DOWNLOADED]', JSON.stringify({
+          field: valName,
+          path: String(recordPath),
+          bytes: audio.length,
+          download_ms: Date.now() - started
+        }));
+
+        const text = await transcribeSpeech(audio);
+        const value = cleanText(text);
+        if (!value) throw new Error('Gemini לא החזיר תמלול עבור ' + valName);
+
+        console.log('[ZMANIM_GEMINI_TRANSCRIPTION]', JSON.stringify({
+          field: valName,
+          value
+        }));
+
+        return value;
       };
 
       const confirmTranscription = async (label, value, valName) => {
