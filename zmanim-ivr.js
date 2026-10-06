@@ -171,6 +171,21 @@ async function trySearchButtons(page) {
   return clicked;
 }
 
+function parseDirectResultTimes(raw) {
+  const text = cleanText(raw);
+  const re = /(שחרית|מנחה|מעריב|ערבית|מוסף|קבלת שבת|סליחות|ותיקין)\s*([01]?\d|2[0-3]):([0-5]\d)/g;
+  const out = [];
+  let match;
+  while ((match = re.exec(text))) {
+    const type = match[1];
+    const time = String(Number(match[2])).padStart(2, '0') + ':' + match[3];
+    const after = text.slice(re.lastIndex, re.lastIndex + 160);
+    const context = cleanText(after.split(/(?:שחרית|מנחה|מעריב|ערבית|מוסף|קבלת שבת|סליחות|ותיקין)\s*(?:[01]?\d|2[0-3]):[0-5]\d/)[0] || '').slice(0, 100);
+    out.push({type, time, context});
+  }
+  return out;
+}
+
 async function geocodeLocation(location) {
   const url = 'https://nominatim.openstreetmap.org/search?' + new URLSearchParams({
     format: 'jsonv2',
@@ -227,7 +242,7 @@ export async function fetchNedarimZmanim(locationText) {
       await new Promise(r => setTimeout(r, 5000));
 
       const directText = await page.evaluate(() => document.body?.innerText || '');
-      const directExtracted = parseTimesFromText(directText);
+      const directExtracted = parseDirectResultTimes(directText);
       const now = nowInIsrael();
       const directFuture = directExtracted.map(x => {
         const [h,m] = x.time.split(':').map(Number);
