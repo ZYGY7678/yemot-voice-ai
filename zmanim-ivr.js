@@ -203,13 +203,8 @@ export async function fetchNedarimZmanim(locationText) {
     const input = await findAddressInput(page);
     if (!input) throw new Error('לא נמצא שדה חיפוש כתובת בנדרים פלוס');
 
-    const locator = page.locator(`${input.tag.toLowerCase()}#${CSS.escape(input.id)}`);
-    if (input.id) {
-      await locator.fill(location);
-    } else {
-      const all = page.locator('input, textarea');
-      await all.nth(input.index).fill(location);
-    }
+    const all = page.locator('input, textarea');
+    await all.nth(input.index).fill(location);
 
     await new Promise(r => setTimeout(r, 1200));
     await acceptAutocomplete(page);
