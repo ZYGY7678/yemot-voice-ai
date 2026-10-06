@@ -502,68 +502,137 @@ function parseCombinedLocation(text) {
 export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech, incomingApiParam}) {
   router.all('/yemot/zmanim', async call => {
     try {
-      console.log('[ZMANIM_IVR] incoming call - combined city + street recording');
+      console.log('[ZMANIM_IVR] incoming call - recording or Hebrew keyboard');
 
       const welcome = 'שלום, הגעתם לקו המניין הקרוב אליך של נדרים פלוס. פותח על ידי חייא שיאומי ממתמחים טופ.';
-
       let address = null;
 
       for (let attempt = 0; attempt < 3 && !address; attempt++) {
-        const prompt =
-          attempt === 0
-            ? welcome + ' הקליטו עכשיו בהקלטה אחת: קודם אמרו את שם היישוב, אחר כך אמרו את המילה רחוב, ואז את שם הרחוב. לדוגמה: נתיבות, רחוב יובל. לאחר מכן לחצו סולמית.'
-            : 'לא הצלחתי לזהות בוודאות את היישוב והרחוב. הקליטו שוב בהקלטה אחת: שם היישוב, המילה רחוב, ואז שם הרחוב. לאחר מכן לחצו סולמית.';
-
-        const recordPath = await call.read(
-          [{type:'text', data:prompt}],
-          'record',
+        const method = await call.read(
+          [{type:'text', data:
+            welcome +
+            ' כדי להקליט את היישוב והרחוב בהקלטה אחת הקישו 1. כדי להקליד את היישוב והרחוב במקלדת עברית הקישו 2.'
+          }],
+          'tap',
           {
-            min_length: 1,
-            max_length: 20,
-            no_confirm_menu: true,
-            save_on_hangup: false
+            val_name: 'location_input_method_' + attempt,
+            max_digits: 1,
+            min_digits: 1,
+            sec_wait: 15,
+            empty_val: 'None',
+            typing_playback_mode: 'Number',
+            block_change_keyboard: true,
+            block_asterisk_key: true
           }
         );
 
-        if (!recordPath) throw new Error('לא התקבלה הקלטה של יישוב ורחוב');
+        const methodValue = cleanText(
+          typeof method === 'string' ? method : method?.value ?? method?.val ?? ''
+        );
 
-        const started = Date.now();
-        const audio = await downloadRecording(String(recordPath));
-        console.log('[ZMANIM_RECORDING_DOWNLOADED]', JSON.stringify({
-          field: 'city_street',
-          path: String(recordPath),
-          bytes: audio.length,
-          download_ms: Date.now() - started
-        }));
+        if (methodValue === '2') {
+          const typed = await call.read(
+            [{type:'text', data:
+              'הקלידו במקלדת עברית את שם היישוב, אחריו רווח והמילה רחוב, אחר כך רווח ושם הרחוב. לדוגמה: נתיבות רחוב יובל. בסיום הקישו סולמית.'
+            }],
+            'tap',
+            {
+              val_name: 'city_street_typed_' + attempt,
+              min_digits: 5,
+              max_digits: 100,
+              sec_wait: 60,
+              empty_val: 'None',
+              typing_playback_mode: 'HebrewKeyboard',
+              block_change_keyboard: true,
+              block_asterisk_key: false
+            }
+          );
 
-        const requestGeminiKey = incomingApiParam
-          ? incomingApiParam(call, 'GeminiKey')
-          : '';
-        const transcript = cleanText(await transcribeSpeech(audio, {
-          geminiKey: requestGeminiKey
-        }));
-        console.log('[ZMANIM_GEMINI_TRANSCRIPTION]', JSON.stringify({
-          field: 'city_street',
-          value: transcript,
-          keyFromApiAdd: Boolean(requestGeminiKey)
-        }));
+          const typedText = cleanText(
+            typeof typed === 'string' ? typed : typed?.value ?? typed?.val ?? ''
+          );
 
-        address = parseCombinedLocation(transcript);
-        if (!address) {
-          console.warn('[ZMANIM_COMBINED_PARSE_FAIL]', JSON.stringify({
-            attempt: attempt + 1,
-            transcript
+          console.log('[ZMANIM_TYPED_LOCATION]', JSON.stringify({
+            value: typedText
           }));
+
+          address = parseCombinedLocation(typedText);
+          if (!address) {
+            console.warn('[ZMANIM_TYPED_PARSE_FAIL]', JSON.stringify({
+              attempt: attempt + 1,
+              value: typedText
+            }));
+            continue;
+          }
+
+          console.log('[ZMANIM_ADDRESS_PARSED]', JSON.stringify({
+            source: 'keyboard',
+            city: address.city,
+            street: address.street
+          }));
+        } else if (methodValue === '1') {
+          const prompt =
+            attempt === 0
+              ? 'הקליטו עכשיו בהקלטה אחת: קודם אמרו את שם היישוב, אחר כך את המילה רחוב, ואז את שם הרחוב. לדוגמה: נתיבות, רחוב יובל. לאחר מכן לחצו סולמית.'
+              : 'הקליטו שוב בהקלטה אחת: שם היישוב, המילה רחוב, ואז שם הרחוב. לדוגמה: נתיבות, רחוב יובל. לאחר מכן לחצו סולמית.';
+
+          const recordPath = await call.read(
+            [{type:'text', data:prompt}],
+            'record',
+            {
+              min_length: 1,
+              max_length: 20,
+              no_confirm_menu: true,
+              save_on_hangup: false
+            }
+          );
+
+          if (!recordPath) throw new Error('לא התקבלה הקלטה של יישוב ורחוב');
+
+          const started = Date.now();
+          const audio = await downloadRecording(String(recordPath));
+          console.log('[ZMANIM_RECORDING_DOWNLOADED]', JSON.stringify({
+            field: 'city_street',
+            path: String(recordPath),
+            bytes: audio.length,
+            download_ms: Date.now() - started
+          }));
+
+          const requestGeminiKey = incomingApiParam
+            ? incomingApiParam(call, 'GeminiKey')
+            : '';
+          const transcript = cleanText(await transcribeSpeech(audio, {
+            geminiKey: requestGeminiKey
+          }));
+          console.log('[ZMANIM_GEMINI_TRANSCRIPTION]', JSON.stringify({
+            field: 'city_street',
+            value: transcript,
+            keyFromApiAdd: Boolean(requestGeminiKey)
+          }));
+
+          address = parseCombinedLocation(transcript);
+          if (!address) {
+            console.warn('[ZMANIM_COMBINED_PARSE_FAIL]', JSON.stringify({
+              attempt: attempt + 1,
+              transcript
+            }));
+            continue;
+          }
+
+          console.log('[ZMANIM_ADDRESS_PARSED]', JSON.stringify({
+            source: 'recording',
+            city: address.city,
+            street: address.street
+          }));
+        } else {
           continue;
         }
 
-        console.log('[ZMANIM_ADDRESS_PARSED]', JSON.stringify({
-          city: address.city,
-          street: address.street
-        }));
-
         const answer = await call.read(
-          [{type:'text', data:'שמעתי: יישוב ' + address.city + ', רחוב ' + address.street + '. להמשיך הקישו 1. להקליט מחדש הקישו 2.'}],
+          [{type:'text', data:
+            'שמעתי: יישוב ' + address.city + ', רחוב ' + address.street +
+            '. להמשיך הקישו 1. להזין מחדש הקישו 2.'
+          }],
           'tap',
           {
             val_name: 'city_street_confirm_' + attempt,
@@ -577,13 +646,20 @@ export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech
           }
         );
 
-        if (cleanText(answer) === '2') {
+        const answerValue = cleanText(
+          typeof answer === 'string' ? answer : answer?.value ?? answer?.val ?? ''
+        );
+
+        if (answerValue === '2') {
           address = null;
           continue;
         }
 
         const location = cleanText(address.city + ' ' + address.street);
-        console.log('[ZMANIM_LOCATION_TRANSCRIBED]', location);
+        console.log('[ZMANIM_LOCATION_TRANSCRIBED]', JSON.stringify({
+          source: 'recording_or_keyboard',
+          location
+        }));
 
         const result = await fetchNedarimZmanim(location);
         const message = formatZmanimForPhone(result);
@@ -592,6 +668,7 @@ export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech
           city: address.city,
           street: address.street,
           location,
+          source: methodValue === '2' ? 'keyboard' : 'recording',
           count: result.items?.length || 0
         }));
 
@@ -600,7 +677,7 @@ export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech
         ]);
       }
 
-      throw new Error('לא ניתן היה לזהות יישוב ורחוב מתוך ההקלטה');
+      throw new Error('לא ניתן היה לזהות יישוב ורחוב');
     } catch (error) {
       console.error('[ZMANIM_IVR_ERROR]', error?.stack || error);
       try {
@@ -610,54 +687,4 @@ export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech
       } catch {}
     }
   });
-}
-
-export async function configureZmanimExtension({token, publicUrl, extension = '1'} = {}) {
-  const resolvedToken = String(token || process.env.ZMANIM_YEMOT_TOKEN || '').trim();
-  const base = String(publicUrl || process.env.ZMANIM_PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || '').replace(/\/$/, '');
-  if (!resolvedToken || !base) {
-    console.warn('[ZMANIM_CONFIG] missing token or public URL');
-    return { ok: false, error: 'missing token or public URL' };
-  }
-
-  const params = new URLSearchParams({
-    token: resolvedToken,
-    path: 'ivr2:/' + String(extension),
-    type: 'api',
-    api_link: base + '/yemot/zmanim',
-    api_url_post: 'yes',
-    api_wait: 'yes',
-    api_wait_play: 'no',
-    api_wait_answer_music_on_hold: 'no',
-    api_timeout: '90',
-    tts_rate: '2',
-    rate: '2',
-    api_add_0: 'YemotToken=' + resolvedToken,
-    api_add_2: 'DetailsTxt=yes'
-  });
-
-  // Keep the Gemini key out of source control. When the secret is added to
-  // Render, it is forwarded to Yemot as GeminiKey, matching the FreeIVR post.
-  const configuredGeminiKey = String(
-    process.env.ZMANIM_TRANSCRIPTION_GEMINI_KEY ||
-    process.env.GEMINI_TRANSCRIPTION_API_KEY ||
-    ''
-  ).trim();
-  if (configuredGeminiKey) {
-    params.set('api_add_1', 'GeminiKey=' + configuredGeminiKey);
-  }
-
-  const response = await fetch('https://www.call2all.co.il/ym/api/UpdateExtension?' + params);
-  const body = await response.text();
-  let parsed = body;
-  try { parsed = JSON.parse(body); } catch {}
-  const ok = response.ok && !(typeof parsed === 'string' && /error|שגיאה/i.test(parsed));
-  console.log('[ZMANIM_CONFIG]', JSON.stringify({
-    ok,
-    status: response.status,
-    extension,
-    api: base + '/yemot/zmanim',
-    response: typeof parsed === 'string' ? parsed.slice(0, 500) : parsed
-  }));
-  return { ok, status: response.status, response: parsed };
 }
