@@ -11,6 +11,19 @@ function cleanText(value) {
     .trim();
 }
 
+function phoneTtsText(value) {
+  return String(value ?? '')
+    .replace(/\r/g, '')
+    .replace(/[.。]+/g, ',')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]+/g, ' ')
+    .replace(/[^\p{L}\p{N}\s,:]/gu, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/ *\n */g, '\n')
+    .replace(/,{2,}/g, ',')
+    .replace(/,+\s*\n/g, '\n')
+    .trim();
+}
+
 function hebrewTimeSpeech(hhmm) {
   const [h, m] = hhmm.split(':').map(Number);
   if (!Number.isInteger(h) || !Number.isInteger(m)) return hhmm;
@@ -460,7 +473,7 @@ export async function fetchNedarimZmanim(locationText) {
 
 export function formatZmanimForPhone(data) {
   const items = data.items || [];
-  if (!items.length) return 'לא נמצאו זמני תפילה קרובים.';
+  if (!items.length) return phoneTtsText('לא נמצאו זמני תפילה קרובים');
 
   const parts = [
     `מצאתי זמני תפילה קרובים עבור ${data.location}.`
@@ -468,10 +481,10 @@ export function formatZmanimForPhone(data) {
 
   for (const item of items.slice(0, 8)) {
     const context = item.context ? ` ${item.context}` : '';
-    parts.push(`${item.type}, בשעה ${hebrewTimeSpeech(item.time)}.${context}`);
+    parts.push(`${item.type}, בשעה ${hebrewTimeSpeech(item.time)}${context ? ', ' + context : ''}`);
   }
 
-  return cleanText(parts.join(' '));
+  return phoneTtsText(parts.join('\n'));
 }
 
 function parseCombinedLocation(text) {
@@ -537,7 +550,7 @@ async function selectMinyan(call, data) {
   const items = Array.isArray(data?.items) ? data.items : [];
   if (!items.length) {
     return await call.id_list_message([
-      {type:'text', data:'לא נמצאו מניינים קרובים עבור ' + cleanText(data?.location || '') + '.'}
+      {type:'text', data:phoneTtsText('לא נמצאו מניינים קרובים עבור ' + cleanText(data?.location || ''))}
     ]);
   }
 
@@ -558,21 +571,21 @@ async function selectMinyan(call, data) {
 
     pageItems.forEach((item, index) => {
       menuParts.push(formatMinyanForPhone(item, index + 1));
-      menuParts.push(`לבחירת מניין ${index + 1} הקישו ${index + 1}.`);
+      menuParts.push(`לבחירת מניין ${index + 1} הקישו ${index + 1}`);
     });
 
     const hasNext = startIndex + pageItems.length < items.length;
     const hasPrevious = page > 0;
 
     if (hasNext) {
-      menuParts.push('למניינים נוספים הקישו 9.');
+      menuParts.push('למניינים נוספים הקישו 9');
     }
     if (hasPrevious) {
-      menuParts.push('לחזרה למניינים הקודמים הקישו 0.');
+      menuParts.push('לחזרה למניינים הקודמים הקישו 0');
     }
 
     const choice = callReadValue(await call.read(
-      [{type:'text', data:cleanText(menuParts.join(' '))}],
+      [{type:'text', data:phoneTtsText(menuParts.join('\n'))}],
       'tap',
       {
         val_name: 'minyan_choice_page_' + page,
@@ -606,7 +619,7 @@ async function selectMinyan(call, data) {
       ].join(' ');
 
       const afterChoice = callReadValue(await call.read(
-        [{type:'text', data:cleanText(detail)}],
+        [{type:'text', data:phoneTtsText(detail.split('\\n').join('\n'))}],
         'tap',
         {
           val_name: 'selected_minyan_action_page_' + page,
@@ -630,7 +643,7 @@ async function selectMinyan(call, data) {
       }
 
       return await call.id_list_message([
-        {type:'text', data:cleanText(formatMinyanForPhone(selected, selectedNumber))}
+        {type:'text', data:phoneTtsText(formatMinyanForPhone(selected, selectedNumber))}
       ]);
     }
   }
@@ -641,7 +654,7 @@ export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech
     try {
       console.log('[ZMANIM_IVR] incoming call - recording or Hebrew keyboard');
 
-      const welcome = 'שלום, הגעתם לקו המניין הקרוב אליך של נדרים פלוס. פותח על ידי חייא שיאומי ממתמחים טופ.';
+      const welcome = 'שלום, הגעתם לקו המניין הקרוב אליך של נדרים פלוס, פותח על ידי חייא שיאומי ממתמחים טופ';
       let address = null;
       let location = '';
 
@@ -649,7 +662,7 @@ export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech
         const method = callReadValue(await call.read(
           [{type:'text', data:
             welcome +
-            ' כדי להקליט בהקלטה אחת את היישוב ואת הרחוב הקישו 1. כדי להקליד את היישוב ואת הרחוב במקלדת עברית הקישו 2.'
+            ' כדי להקליט בהקלטה אחת את היישוב ואת הרחוב הקישו 1, כדי להקליד את היישוב ואת הרחוב במקלדת עברית הקישו 2'
           }],
           'tap',
           {
@@ -667,7 +680,7 @@ export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech
         if (method === '2') {
           const typedText = callReadValue(await call.read(
             [{type:'text', data:
-              'הקלידו במקלדת עברית את שם היישוב ואת שם הרחוב יחד. בסיום ההקלדה הקישו סולמית.'
+              'הקלידו במקלדת עברית את שם היישוב ואת שם הרחוב יחד, בסיום ההקלדה הקישו סולמית'
             }],
             'tap',
             {
@@ -697,8 +710,8 @@ export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech
         } else if (method === '1') {
           const prompt =
             attempt === 0
-              ? 'הקליטו עכשיו בהקלטה אחת את שם היישוב ואת שם הרחוב. לאחר מכן לחצו סולמית.'
-              : 'הקליטו שוב בהקלטה אחת את שם היישוב ואת שם הרחוב. לאחר מכן לחצו סולמית.';
+              ? 'הקליטו עכשיו בהקלטה אחת את שם היישוב ואת שם הרחוב, לאחר מכן לחצו סולמית'
+              : 'הקליטו שוב בהקלטה אחת את שם היישוב ואת שם הרחוב, לאחר מכן לחצו סולמית';
 
           const recordPath = await call.read(
             [{type:'text', data:prompt}],
@@ -753,8 +766,8 @@ export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech
         }
 
         const confirmationText = method === '2'
-          ? 'שמעתי: ' + location + '. להמשיך הקישו 1. להזין מחדש הקישו 2.'
-          : 'שמעתי: יישוב ' + address.city + ', רחוב ' + address.street + '. להמשיך הקישו 1. להזין מחדש הקישו 2.';
+          ? phoneTtsText('שמעתי, ' + location + '\nלהמשיך הקישו 1\nלהזין מחדש הקישו 2')
+          : phoneTtsText('שמעתי, יישוב ' + address.city + ', רחוב ' + address.street + '\nלהמשיך הקישו 1\nלהזין מחדש הקישו 2');
 
         const answerValue = callReadValue(await call.read(
           [{type:'text', data:confirmationText}],
@@ -792,13 +805,14 @@ export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech
 
         // Return a short status prompt before starting the slow external search.
         await call.read(
-          [{type:'text', data:'רק רגע, אני מחפש את המניינים הקרובים.'}],
+          [{type:'text', data:'רק רגע, אני מחפש את המניינים הקרובים'}],
           'tap',
           {
             val_name: 'zmanim_search_notice_' + attempt,
             max_digits: 1,
             min_digits: 1,
             sec_wait: 1,
+            allow_empty: true,
             empty_val: 'None',
             typing_playback_mode: 'Number',
             block_change_keyboard: true,
@@ -832,7 +846,7 @@ export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech
       console.error('[ZMANIM_IVR_ERROR]', error?.stack || error);
       try {
         return await call.id_list_message([
-          {type:'text', data:'מצטערים, לא הצלחתי לקבל את המקום או למצוא את המניינים כרגע. נסו שוב.'}
+          {type:'text', data:phoneTtsText('מצטערים, לא הצלחתי לקבל את המקום או למצוא את המניינים כרגע\nנסו שוב')}
         ]);
       } catch {}
     }
