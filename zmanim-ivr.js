@@ -499,7 +499,7 @@ function parseCombinedLocation(text) {
   return null;
 }
 
-export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech}) {
+export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech, incomingApiParam}) {
   router.all('/yemot/zmanim', async call => {
     try {
       console.log('[ZMANIM_IVR] incoming call - combined city + street recording');
@@ -536,10 +536,16 @@ export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech
           download_ms: Date.now() - started
         }));
 
-        const transcript = cleanText(await transcribeSpeech(audio));
+        const requestGeminiKey = incomingApiParam
+          ? incomingApiParam(call, 'GeminiKey')
+          : '';
+        const transcript = cleanText(await transcribeSpeech(audio, {
+          geminiKey: requestGeminiKey
+        }));
         console.log('[ZMANIM_GEMINI_TRANSCRIPTION]', JSON.stringify({
           field: 'city_street',
-          value: transcript
+          value: transcript,
+          keyFromApiAdd: Boolean(requestGeminiKey)
         }));
 
         address = parseCombinedLocation(transcript);
@@ -619,13 +625,27 @@ export async function configureZmanimExtension({token, publicUrl, extension = '1
     path: 'ivr2:/' + String(extension),
     type: 'api',
     api_link: base + '/yemot/zmanim',
+    api_url_post: 'yes',
     api_wait: 'yes',
     api_wait_play: 'no',
     api_wait_answer_music_on_hold: 'no',
     api_timeout: '90',
     tts_rate: '2',
-    rate: '2'
+    rate: '2',
+    api_add_0: 'YemotToken=' + resolvedToken,
+    api_add_2: 'DetailsTxt=yes'
   });
+
+  // Keep the Gemini key out of source control. When the secret is added to
+  // Render, it is forwarded to Yemot as GeminiKey, matching the FreeIVR post.
+  const configuredGeminiKey = String(
+    process.env.ZMANIM_TRANSCRIPTION_GEMINI_KEY ||
+    process.env.GEMINI_TRANSCRIPTION_API_KEY ||
+    ''
+  ).trim();
+  if (configuredGeminiKey) {
+    params.set('api_add_1', 'GeminiKey=' + configuredGeminiKey);
+  }
 
   const response = await fetch('https://www.call2all.co.il/ym/api/UpdateExtension?' + params);
   const body = await response.text();
