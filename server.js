@@ -473,9 +473,11 @@ router.all('/yemot/main-menu', async call => {
     if(choice==='3') return await call.go_to_folder('/3');
     return await call.go_to_folder('/');
   }catch(error){
-    if(error instanceof ExitError) throw error;
+    const name=String(error?.name||'');
+    const message=String(error?.message||'');
+    if(error instanceof ExitError || /Hangup|Exit/i.test(name+' '+message)) return;
     console.error('[MAIN_MENU_ERROR]',error?.stack||error);
-    return await call.go_to_folder('/');
+    try { return await call.go_to_folder('/'); } catch {}
   }
 });
 
