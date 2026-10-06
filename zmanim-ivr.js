@@ -877,11 +877,12 @@ export async function configureZmanimExtension({token, publicUrl, extension = '1
     api_link: base + '/yemot/zmanim',
     api_url_post: 'yes',
     api_wait: 'yes',
-    api_wait_play: 'no',
     api_wait_answer_music_on_hold: 'yes',
+    api_wait_answer_music_on_hold_different: 'ztomao',
+    api_wait_answer_music_on_hold_continue_all_sends: 'yes',
     api_timeout: '90',
-    tts_rate: '2',
-    rate: '2',
+    tts_rate: '1',
+    rate: '1',
     api_add_0: 'YemotToken=' + resolvedToken,
     api_add_2: 'DetailsTxt=yes'
   });
