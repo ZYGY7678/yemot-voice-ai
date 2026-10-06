@@ -542,8 +542,10 @@ function callReadValue(result) {
 
 function formatMinyanForPhone(item, number) {
   const context = cleanText(item?.context || '').slice(0, 110);
-  const contextText = context ? ', ' + context : '';
-  return `מניין ${number}: ${item.type}, בשעה ${hebrewTimeSpeech(item.time)}${contextText}.`;
+  return phoneTtsText(
+    'מניין ' + number + ', ' + item.type + ', בשעה, ' +
+    hebrewTimeSpeech(item.time) + ', ' + (context || 'ללא פרטים נוספים')
+  );
 }
 
 async function selectMinyan(call, data) {
@@ -560,78 +562,75 @@ async function selectMinyan(call, data) {
   while (true) {
     const startIndex = page * pageSize;
     const pageItems = items.slice(startIndex, startIndex + pageSize);
-    if (!pageItems.length) {
-      page = 0;
-      continue;
-    }
+    if (!pageItems.length) { page = 0; continue; }
 
-    const menuMessages = [
-      {
-        type: 'text',
-        data: phoneTtsText(`מצאתי ${items.length} מניינים קרובים עבור ${cleanText(data.location)}`)
-      }
-    ];
+    let selectedNumber = null;
+    let selectedMinyan = null;
+    let navigated = false;
 
-    pageItems.forEach((item, index) => {
-      menuMessages.push({
-        type: 'text',
-        data: phoneTtsText(formatMinyanForPhone(item, index + 1))
-      });
-    });
-
-    const hasNext = startIndex + pageItems.length < items.length;
-    const hasPrevious = page > 0;
-
-    const navigationParts = [];
-    if (hasNext) navigationParts.push('למניינים נוספים הקישו 9');
-    if (hasPrevious) navigationParts.push('לחזרה למניינים הקודמים הקישו 0');
-    navigationParts.push('לבחירת מניין הקישו את המספר המתאים');
-
-    menuMessages.push({
-      type: 'text',
-      data: phoneTtsText(navigationParts.join(', '))
-    });
-
-    const choice = callReadValue(await call.read(
-      menuMessages,
-      'tap',
-      {
-        val_name: 'minyan_choice_page_' + page,
-        max_digits: 1,
-        min_digits: 1,
-        sec_wait: 20,
-        empty_val: 'None',
-        typing_playback_mode: 'Number',
-        block_change_keyboard: true,
-        block_asterisk_key: true
-      }
-    ));
-
-    if (choice === '9' && hasNext) {
-      page += 1;
-      continue;
-    }
-
-    if (choice === '0' && hasPrevious) {
-      page -= 1;
-      continue;
-    }
-
-    const selectedNumber = Number(choice);
-    if (Number.isInteger(selectedNumber) && selectedNumber >= 1 && selectedNumber <= pageItems.length) {
-      const selected = pageItems[selectedNumber - 1];
-      const detail = [
-        'בחרתם, ' + formatMinyanForPhone(selected, selectedNumber),
-        'עבור ' + cleanText(data.location),
-        'לשמיעת הרשימה מחדש הקישו 1',
-        'לחיפוש חדש הקישו 2'
+    // Each item gets its own read. read_none=true means the full item is played
+    // even when the caller does not press anything, then the next item is played.
+    for (let index = 0; index < pageItems.length; index++) {
+      const item = pageItems[index];
+      const number = index + 1;
+      const itemText = [
+        formatMinyanForPhone(item, number),
+        'לבחירת מניין ' + number + ', הקישו ' + number
       ].join('\n');
 
-      const afterChoice = callReadValue(await call.read(
-        [{type:'text', data:phoneTtsText(detail.split('\\n').join('\n'))}],
+      const choice = callReadValue(await call.read(
+        [{type:'text', data:phoneTtsText(itemText)}],
         'tap',
         {
-          val_name: 'selected_minyan_action_page_' + page,
+          val_name: 'minyan_choice_page_' + page + '_item_' + index,
+          max_digits: 1,
+          min_digits: 1,
+          max: 1,
+          sec_wait: 0.5,
+          read_none: true,
+          empty_val: 'None',
+          typing_playback_mode: 'Number',
+          block_change_keyboard: true,
+          block_asterisk_key: true
+        }
+      ));
+
+      if (!choice || choice === 'None') continue;
+
+      if (choice === '9' && startIndex + pageItems.length < items.length) {
+        page += 1;
+        navigated = true;
+        break;
+      }
+
+      if (choice === '0' && page > 0) {
+        page -= 1;
+        navigated = true;
+        break;
+      }
+
+      const n = Number(choice);
+      if (Number.isInteger(n) && n >= 1 && n <= pageItems.length) {
+        selectedNumber = n;
+        selectedMinyan = pageItems[n - 1];
+        break;
+      }
+    }
+
+    if (navigated) continue;
+
+    // The complete page was read. Now wait for a choice without re-speaking the list.
+    if (selectedMinyan === null) {
+      const controls = [];
+      if (startIndex + pageItems.length < items.length) controls.push('למניינים נוספים, הקישו 9');
+      if (page > 0) controls.push('לחזרה למניינים הקודמים, הקישו 0');
+      controls.push('לבחירת מניין, הקישו את מספר המניין');
+
+      const choice = callReadValue(await call.read(
+        [{type:'text', data:phoneTtsText(controls.join('\n'))}],
+        'tap',
+        {
+          val_name: 'minyan_controls_page_' + page,
           max_digits: 1,
           min_digits: 1,
           sec_wait: 15,
@@ -642,22 +641,54 @@ async function selectMinyan(call, data) {
         }
       ));
 
-      if (afterChoice === '1') {
-        page = 0;
+      if (choice === '9' && startIndex + pageItems.length < items.length) {
+        page += 1;
+        continue;
+      }
+      if (choice === '0' && page > 0) {
+        page -= 1;
         continue;
       }
 
-      if (afterChoice === '2') {
-        return null;
+      const n = Number(choice);
+      if (!Number.isInteger(n) || n < 1 || n > pageItems.length) {
+        page = 0;
+        continue;
       }
-
-      return await call.id_list_message([
-        {type:'text', data:phoneTtsText(formatMinyanForPhone(selected, selectedNumber))}
-      ]);
+      selectedNumber = n;
+      selectedMinyan = pageItems[n - 1];
     }
+
+    const detail = [
+      'בחרתם ב' + formatMinyanForPhone(selectedMinyan, selectedNumber),
+      'עבור ' + cleanText(data.location),
+      'לשמיעת הרשימה מחדש, הקישו 1',
+      'לחיפוש חדש, הקישו 2'
+    ].join('\n');
+
+    const afterChoice = callReadValue(await call.read(
+      [{type:'text', data:phoneTtsText(detail)}],
+      'tap',
+      {
+        val_name: 'selected_minyan_action_page_' + page,
+        max_digits: 1,
+        min_digits: 1,
+        sec_wait: 15,
+        empty_val: 'None',
+        typing_playback_mode: 'Number',
+        block_change_keyboard: true,
+        block_asterisk_key: true
+      }
+    ));
+
+    if (afterChoice === '1') { page = 0; continue; }
+    if (afterChoice === '2') return null;
+
+    return await call.id_list_message([
+      {type:'text', data:phoneTtsText(formatMinyanForPhone(selectedMinyan, selectedNumber))}
+    ]);
   }
 }
-
 export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech, incomingApiParam}) {
   router.all('/yemot/zmanim', async call => {
     try {
