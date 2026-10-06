@@ -140,6 +140,66 @@ function callerPhone(c) {
   return String(c?.values?.ApiPhone??c?.req?.query?.ApiPhone??c?.req?.body?.ApiPhone??'').trim()||'לא מזוהה';
 }
 
+function pcmToWav(pcm, sampleRate = 24000, channels = 1, bits = 16) {
+  if (!Buffer.isBuffer(pcm) || pcm.length % 2 !== 0) throw new Error('Invalid PCM audio');
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0);
+  header.writeUInt32LE(36 + pcm.length, 4);
+  header.write('WAVE', 8);
+  header.write('fmt ', 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(channels, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(sampleRate * channels * bits / 8, 28);
+  header.writeUInt16LE(channels * bits / 8, 32);
+  header.writeUInt16LE(bits, 34);
+  header.write('data', 36);
+  header.writeUInt32LE(pcm.length, 40);
+  return Buffer.concat([header, pcm]);
+}
+
+async function generateTestSpeechWav(text) {
+  let last;
+  const prompt = String(text || 'נתיבות יובל עשר').trim();
+  for (const apiKey of apiKeys) {
+    try {
+      const response = await timeout(fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
+        method: 'POST',
+        headers: {
+          'x-goog-api-key': apiKey,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'gemini-3.1-flash-tts-preview',
+          input: 'אמור בעברית, ברור ואיטי: ' + prompt,
+          response_format: {type:'audio'},
+          generation_config: {
+            speech_config: [{voice:'Kore'}]
+          }
+        })
+      }),20000,'Gemini TTS test');
+
+      if (!response.ok) {
+        throw new Error('Gemini TTS HTTP ' + response.status + ': ' + (await response.text()).slice(0,500));
+      }
+
+      const data = await response.json();
+      const encoded = data?.output_audio?.data;
+      if (!encoded) throw new Error('Gemini TTS returned no audio');
+
+      const pcm = Buffer.from(encoded, 'base64');
+      const wav = pcmToWav(pcm, 24000, 1, 16);
+      console.log('[GEMINI_TTS_TEST_OK]', JSON.stringify({bytes:wav.length, text:prompt}));
+      return {wav, text:prompt};
+    } catch(e) {
+      last=e;
+      console.error('[GEMINI_TTS_TEST_FAIL]', e?.message || e);
+    }
+  }
+  throw last || new Error('No Gemini API key available');
+}
+
 async function downloadRecording(path) {
   const p=path.startsWith('ivr2:')?path:'ivr2:'+path;
   const token=String(process.env.YEMOT_API_KEY||'').trim();
@@ -461,6 +521,41 @@ app.get('/api/logs',(req,res)=>res.json({
     memory:Math.round(process.memoryUsage().rss/1024/1024)
   }
 }));
+app.get('/api/test-gemini-audio.wav',async(req,res)=>{
+  try{
+    const generated=await generateTestSpeechWav('נתיבות יובל עשר');
+    res.setHeader('Content-Type','audio/wav');
+    res.setHeader('Content-Disposition','inline; filename="gemini-hebrew-test.wav"');
+    res.send(generated.wav);
+  }catch(e){
+    console.error('[GEMINI_AUDIO_FILE_TEST_FAIL]',e?.stack||e);
+    res.status(500).json({ok:false,error:e?.message||String(e)});
+  }
+});
+
+app.get('/api/test-gemini-audio-roundtrip',async(req,res)=>{
+  try{
+    const generated=await generateTestSpeechWav('נתיבות יובל עשר');
+    const transcript=await transcribeSpeech(generated.wav);
+    const cleanTranscript=clean(transcript);
+    console.log('[GEMINI_AUDIO_ROUNDTRIP_OK]',JSON.stringify({
+      expected:generated.text,
+      transcript:cleanTranscript,
+      bytes:generated.wav.length
+    }));
+    res.json({
+      ok:true,
+      expected:generated.text,
+      transcript:cleanTranscript,
+      audioBytes:generated.wav.length,
+      audioUrl:'/api/test-gemini-audio.wav'
+    });
+  }catch(e){
+    console.error('[GEMINI_AUDIO_ROUNDTRIP_FAIL]',e?.stack||e);
+    res.status(500).json({ok:false,error:e?.message||String(e)});
+  }
+});
+
 app.post('/api/test-ai',async(req,res)=>{
   let s;
   try{
