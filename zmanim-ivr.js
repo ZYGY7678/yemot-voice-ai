@@ -883,7 +883,6 @@ export function registerZmanimRoute({
               '\\nלחיפושים שמורים הקישו 2' +
               '\\nלחיפוש האחרון הקישו 3'
             )
-            )
           }],
           'tap',
           {
