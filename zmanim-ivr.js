@@ -565,27 +565,35 @@ async function selectMinyan(call, data) {
       continue;
     }
 
-    const menuParts = [
-      `מצאתי ${items.length} מניינים קרובים עבור ${cleanText(data.location)}.`
+    const menuMessages = [
+      {
+        type: 'text',
+        data: phoneTtsText(`מצאתי ${items.length} מניינים קרובים עבור ${cleanText(data.location)}`)
+      }
     ];
 
     pageItems.forEach((item, index) => {
-      menuParts.push(formatMinyanForPhone(item, index + 1));
-      menuParts.push(`לבחירת מניין ${index + 1} הקישו ${index + 1}`);
+      menuMessages.push({
+        type: 'text',
+        data: phoneTtsText(formatMinyanForPhone(item, index + 1))
+      });
     });
 
     const hasNext = startIndex + pageItems.length < items.length;
     const hasPrevious = page > 0;
 
-    if (hasNext) {
-      menuParts.push('למניינים נוספים הקישו 9');
-    }
-    if (hasPrevious) {
-      menuParts.push('לחזרה למניינים הקודמים הקישו 0');
-    }
+    const navigationParts = [];
+    if (hasNext) navigationParts.push('למניינים נוספים הקישו 9');
+    if (hasPrevious) navigationParts.push('לחזרה למניינים הקודמים הקישו 0');
+    navigationParts.push('לבחירת מניין הקישו את המספר המתאים');
+
+    menuMessages.push({
+      type: 'text',
+      data: phoneTtsText(navigationParts.join(', '))
+    });
 
     const choice = callReadValue(await call.read(
-      [{type:'text', data:phoneTtsText(menuParts.join('\n'))}],
+      menuMessages,
       'tap',
       {
         val_name: 'minyan_choice_page_' + page,
@@ -613,10 +621,11 @@ async function selectMinyan(call, data) {
     if (Number.isInteger(selectedNumber) && selectedNumber >= 1 && selectedNumber <= pageItems.length) {
       const selected = pageItems[selectedNumber - 1];
       const detail = [
-        'בחרתם ב' + formatMinyanForPhone(selected, selectedNumber),
-        'עבור ' + cleanText(data.location) + '.',
-        'לשמיעת הרשימה מחדש הקישו 1. לחיפוש חדש הקישו 2.'
-      ].join(' ');
+        'בחרתם, ' + formatMinyanForPhone(selected, selectedNumber),
+        'עבור ' + cleanText(data.location),
+        'לשמיעת הרשימה מחדש הקישו 1',
+        'לחיפוש חדש הקישו 2'
+      ].join('\n');
 
       const afterChoice = callReadValue(await call.read(
         [{type:'text', data:phoneTtsText(detail.split('\\n').join('\n'))}],
