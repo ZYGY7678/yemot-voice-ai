@@ -526,12 +526,13 @@ export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech
 
       const welcome = 'שלום, הגעתם לקו המניין הקרוב אליך של נדרים פלוס. פותח על ידי חייא שיאומי ממתמחים טופ.';
       let address = null;
+      let location = '';
 
-      for (let attempt = 0; attempt < 3 && !address; attempt++) {
+      for (let attempt = 0; attempt < 3 && !location; attempt++) {
         const method = await call.read(
           [{type:'text', data:
             welcome +
-            ' כדי להקליט את היישוב והרחוב בהקלטה אחת הקישו 1. כדי להקליד את היישוב והרחוב במקלדת עברית הקישו 2.'
+            ' כדי להקליט בהקלטה אחת את היישוב ואת הרחוב הקישו 1. כדי להקליד את היישוב ואת הרחוב במקלדת עברית הקישו 2.'
           }],
           'tap',
           {
@@ -553,7 +554,7 @@ export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech
         if (methodValue === '2') {
           const typed = await call.read(
             [{type:'text', data:
-              'הקלידו במקלדת עברית את שם היישוב, אחריו רווח והמילה רחוב, אחר כך רווח ושם הרחוב. לדוגמה: נתיבות רחוב יובל. בסיום הקישו סולמית.'
+              'הקלידו במקלדת עברית את שם היישוב ואת שם הרחוב יחד. בסיום ההקלדה הקישו סולמית.'
             }],
             'tap',
             {
@@ -576,25 +577,23 @@ export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech
             value: typedText
           }));
 
-          address = parseCombinedLocation(typedText);
-          if (!address) {
-            console.warn('[ZMANIM_TYPED_PARSE_FAIL]', JSON.stringify({
-              attempt: attempt + 1,
-              value: typedText
+          if (!typedText || typedText.length < 2) {
+            console.warn('[ZMANIM_TYPED_INPUT_EMPTY]', JSON.stringify({
+              attempt: attempt + 1
             }));
             continue;
           }
 
-          console.log('[ZMANIM_ADDRESS_PARSED]', JSON.stringify({
+          location = typedText;
+          console.log('[ZMANIM_TYPED_LOCATION_ACCEPTED]', JSON.stringify({
             source: 'keyboard',
-            city: address.city,
-            street: address.street
+            location
           }));
         } else if (methodValue === '1') {
           const prompt =
             attempt === 0
-              ? 'הקליטו עכשיו בהקלטה אחת: קודם אמרו את שם היישוב, אחר כך את המילה רחוב, ואז את שם הרחוב. לדוגמה: נתיבות, רחוב יובל. לאחר מכן לחצו סולמית.'
-              : 'הקליטו שוב בהקלטה אחת: שם היישוב, המילה רחוב, ואז שם הרחוב. לדוגמה: נתיבות, רחוב יובל. לאחר מכן לחצו סולמית.';
+              ? 'הקליטו עכשיו בהקלטה אחת את שם היישוב ואת שם הרחוב. לאחר מכן לחצו סולמית.'
+              : 'הקליטו שוב בהקלטה אחת את שם היישוב ואת שם הרחוב. לאחר מכן לחצו סולמית.';
 
           const recordPath = await call.read(
             [{type:'text', data:prompt}],
@@ -648,11 +647,12 @@ export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech
           continue;
         }
 
+        const confirmationText = methodValue === '2'
+          ? 'שמעתי: ' + location + '. להמשיך הקישו 1. להזין מחדש הקישו 2.'
+          : 'שמעתי: יישוב ' + address.city + ', רחוב ' + address.street + '. להמשיך הקישו 1. להזין מחדש הקישו 2.';
+
         const answer = await call.read(
-          [{type:'text', data:
-            'שמעתי: יישוב ' + address.city + ', רחוב ' + address.street +
-            '. להמשיך הקישו 1. להזין מחדש הקישו 2.'
-          }],
+          [{type:'text', data:confirmationText}],
           'tap',
           {
             val_name: 'city_street_confirm_' + attempt,
@@ -672,10 +672,13 @@ export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech
 
         if (answerValue === '2') {
           address = null;
+          location = '';
           continue;
         }
 
-        const location = cleanText(address.city + ' ' + address.street);
+        if (!location && address) {
+          location = cleanText(address.city + ' ' + address.street);
+        }
         console.log('[ZMANIM_LOCATION_TRANSCRIBED]', JSON.stringify({
           source: 'recording_or_keyboard',
           location
