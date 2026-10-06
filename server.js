@@ -248,6 +248,21 @@ function detectAudioMime(buf) {
   return 'audio/wav';
 }
 
+function extractTranscription(response) {
+  const parts = response?.candidates?.flatMap(c => c?.content?.parts || []) || [];
+  const values = [];
+  for (const part of parts) {
+    const at = part?.audioTranscription;
+    const at2 = part?.audio_transcription;
+    if (typeof at === 'string') values.push(at);
+    else if (typeof at?.text === 'string') values.push(at.text);
+    else if (typeof at2 === 'string') values.push(at2);
+    else if (typeof at2?.text === 'string') values.push(at2.text);
+  }
+  const direct = clean(response?.text || '');
+  return clean(values.join(' ') || direct);
+}
+
 async function transcribeSpeech(buf) {
   let last;
   const mimeType = detectAudioMime(buf);
@@ -296,7 +311,7 @@ async function transcribeSpeech(buf) {
           }
         }),20000,'Gemini 3.5 Transcribe');
 
-        const text = clean(response?.text||'');
+        const text = extractTranscription(response);
         if (text) {
           console.log('[ZMANIM_TRANSCRIPTION_OK]',JSON.stringify({model:'gemini-3.5-transcribe',keyIndex:keyIndex+1}));
           return text;
@@ -307,18 +322,30 @@ async function transcribeSpeech(buf) {
         console.error('[ZMANIM_TRANSCRIPTION_FAIL]', 'gemini-3.5-transcribe', String(transcribeError?.message||transcribeError));
 
         // General current audio model fallback.
-        const response = await timeout(ai.models.generateContent({
-          model:'gemini-3.8-flash',
-          contents:createUserContent([
-            createPartFromUri(uploaded.uri, uploaded.mimeType || mimeType),
-            'תמלל את ההקלטה בעברית. החזר רק את המילים שנאמרו, ללא הסבר.'
-          ])
-        }),20000,'Gemini 3.8 audio transcription');
-
-        const text = clean(response?.text||'');
-        if (!text) throw new Error('Empty transcription from Gemini 3.8');
+        let fallbackText = '';
+        let fallbackLast;
+        for(let attempt=1; attempt<=3; attempt++){
+          try{
+            const response = await timeout(ai.models.generateContent({
+              model:'gemini-3.8-flash',
+              contents:createUserContent([
+                createPartFromUri(uploaded.uri, uploaded.mimeType || mimeType),
+                'תמלל את ההקלטה בעברית. החזר רק את המילים שנאמרו, ללא הסבר.'
+              ])
+            }),20000,'Gemini 3.8 audio transcription');
+            fallbackText = extractTranscription(response);
+            if(fallbackText) break;
+          }catch(err){
+            fallbackLast = err;
+            const msg = String(err?.message || err);
+            console.error('[ZMANIM_GEMINI_FALLBACK_FAIL]', JSON.stringify({attempt, error:msg}));
+            if(!/503|UNAVAILABLE|high demand/i.test(msg) || attempt===3) break;
+            await new Promise(r=>setTimeout(r,1200*attempt));
+          }
+        }
+        if (!fallbackText) throw (fallbackLast || new Error('Empty transcription from Gemini 3.8'));
         console.log('[ZMANIM_TRANSCRIPTION_OK]',JSON.stringify({model:'gemini-3.8-flash',keyIndex:keyIndex+1}));
-        return text;
+        return fallbackText;
       }
     } catch(e) {
       last=e;
