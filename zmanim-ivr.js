@@ -276,54 +276,62 @@ export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech
 
       const welcome = 'שלום, הגעתם לקו המניין הקרוב אליך של נדרים פלוס. פותח על ידי חייא שיאומי ממתמחים טופ.';
 
-      // הקלטה רגילה בלבד. אין כאן STT של ימות המשיח ואין שימוש ביחידות תמלול.
-      const cityRecording = await call.read(
-        [{type:'text', data: welcome + ' אנא אמרו עכשיו את שם היישוב. לאחר שתסיימו לדבר, ההקלטה תישלח לשרת לצורך תמלול.'}],
-        'record',
-        {
-          min_length: 1,
-          max_length: 8,
-          no_confirm_menu: true,
-          save_on_hangup: false
+      async function recordAndConfirm(prompt, label, transcriptionPrompt) {
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          const recording = await call.read(
+            [{type:'text', data:prompt + (attempt > 1 ? ' נסו שוב.' : '')}],
+            'record',
+            {min_length:1, max_length:8, no_confirm_menu:true, save_on_hangup:false}
+          );
+          if (!recording) throw new Error('No ' + label + ' recording received');
+
+          console.log('[ZMANIM_' + label.toUpperCase() + '_RECORDING]', String(recording));
+          const text = cleanText(await transcribeSpeech(
+            await downloadRecording(String(recording)),
+            {prompt: transcriptionPrompt}
+          ));
+
+          if (!text || text === 'None') {
+            if (attempt < 3) {
+              await call.id_list_message(
+                [{type:'text',data:'לא הצלחתי להבין את ההקלטה. בואו ננסה שוב.'}],
+                {prependToNextAction:true}
+              );
+              continue;
+            }
+            throw new Error('Empty transcription for ' + label);
+          }
+
+          console.log('[ZMANIM_' + label.toUpperCase() + '_TRANSCRIPTION]', text);
+
+          const choice = await call.read(
+            [{type:'text',data:'שמעתי: ' + text + '. להמשיך הקישו 1. להקליט מחדש הקישו 2.'}],
+            'tap',
+            {max_digits:1, min_digits:1, digits_allowed:[1,2], sec_wait:10}
+          );
+
+          if (String(choice) === '1') return text;
+
+          await call.id_list_message(
+            [{type:'text',data:'בסדר, מקליטים מחדש.'}],
+            {prependToNextAction:true}
+          );
         }
+
+        throw new Error('Too many transcription attempts for ' + label);
+      }
+
+      const city = await recordAndConfirm(
+        welcome + ' אנא אמרו עכשיו את שם היישוב.',
+        'city',
+        'תמלול שם יישוב בישראל'
       );
-      if (!cityRecording) {
-        throw new Error('No city recording received');
-      }
-      console.log('[ZMANIM_CITY_RECORDING]', String(cityRecording));
-      const city = cleanText(await transcribeSpeech(await downloadRecording(String(cityRecording)), {
-        prompt: 'תמלול שם יישוב בישראל'
-      }));
 
-      if (!city || city === 'None') {
-        await call.id_list_message([{type:'text', data:'לא התקבל שם יישוב. אנא נסו שוב.'}], {prependToNextAction:true});
-        return;
-      }
-
-      console.log('[ZMANIM_CITY_TYPED]', city);
-
-      const streetRecording = await call.read(
-        [{type:'text', data:'תודה. עכשיו אמרו את שם הרחוב. לאחר שתסיימו לדבר, ההקלטה תישלח לשרת לצורך תמלול.'}],
-        'record',
-        {
-          min_length: 1,
-          max_length: 8,
-          no_confirm_menu: true,
-          save_on_hangup: false
-        }
+      const street = await recordAndConfirm(
+        'תודה. עכשיו אמרו את שם הרחוב.',
+        'street',
+        'תמלול שם רחוב בישראל'
       );
-      if (!streetRecording) {
-        throw new Error('No street recording received');
-      }
-      console.log('[ZMANIM_STREET_RECORDING]', String(streetRecording));
-      const street = cleanText(await transcribeSpeech(await downloadRecording(String(streetRecording)), {
-        prompt: 'תמלול שם רחוב בישראל'
-      }));
-
-      if (!street || street === 'None') {
-        await call.id_list_message([{type:'text', data:'לא התקבל שם רחוב. אנא נסו שוב.'}], {prependToNextAction:true});
-        return;
-      }
 
       const location = cleanText(city + ' ' + street);
       console.log('[ZMANIM_LOCATION_TYPED]', location);
@@ -339,14 +347,14 @@ export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech
       }));
 
       await call.id_list_message(
-        [{type:'text', data:message}],
+        [{type:'text',data:message}],
         {prependToNextAction:true}
       );
     } catch (error) {
       console.error('[ZMANIM_IVR_ERROR]', error?.stack || error);
       try {
         await call.id_list_message([
-          {type:'text', data:'מצטערים, לא הצלחתי לקבל כרגע את זמני התפילות. נסו שוב בעוד רגע.'}
+          {type:'text',data:'מצטערים, לא הצלחתי לקבל כרגע את זמני התפילות. נסו שוב בעוד רגע.'}
         ], {prependToNextAction:true});
       } catch {}
     }
