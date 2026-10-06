@@ -286,7 +286,9 @@ async function transcribeSpeech(buf) {
       try {
         const response = await timeout(ai.models.generateContent({
           model:'gemini-3.5-transcribe',
-          contents:[uploaded],
+          contents:createUserContent([
+            createPartFromUri(uploaded.uri, uploaded.mimeType || mimeType)
+          ]),
           config:{
             audioTranscriptionConfig:{
               languageCodes:['he-IL']
