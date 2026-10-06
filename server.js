@@ -445,39 +445,62 @@ async function callHandler(call) {
 
 async function mainMenuHandler(call) {
   try {
-    const choice=String(await call.read(
-      [{
-        type:'text',
-        data:
-          'שלום, הגעתם לקו המניין הקרוב אליך של נדרים פלוס, פותח על ידי חייא שיאומי ממתמחים טופ,' +
-          '\nלחיפוש מניינים לפי יישוב ורחוב, הקישו 1,' +
-          '\nלרשימת החיפושים השמורים שלכם, הקישו 2,' +
-          '\nלחיפוש האחרון שלכם, הקישו 3,'
-      }],
+    console.log('[MAIN_MENU_ENTER]', JSON.stringify({
+      extension: call?.ApiExtension || null,
+      callId: call?.callId || null,
+      values: call?.values || null
+    }));
+
+    const menu = {
+      type:'text',
+      data:
+        'שלום, הגעתם לקו המניין הקרוב אליך של נדרים פלוס, פותח על ידי חייא שיאומי ממתמחים טופ,' +
+        '\nלחיפוש מניינים לפי יישוב ורחוב, הקישו 1,' +
+        '\nלרשימת החיפושים השמורים שלכם, הקישו 2,' +
+        '\nלחיפוש האחרון שלכם, הקישו 3,',
+      removeInvalidChars:true
+    };
+
+    const rawChoice = await call.read(
+      [menu],
       'tap',
       {
         val_name:'main_menu_choice',
         max_digits:1,
         min_digits:1,
-        sec_wait:20,
+        sec_wait:30,
         empty_val:'None',
-        digits_allowed:[1,2,3],
         typing_playback_mode:'Number',
         block_change_keyboard:true,
-        block_asterisk_key:true
+        block_asterisk_key:true,
+        removeInvalidChars:true
       }
-    )||'').trim();
+    );
+
+    const choice = String(rawChoice ?? '').trim();
+    console.log('[MAIN_MENU_CHOICE]', JSON.stringify({
+      choice,
+      rawType:typeof rawChoice
+    }));
 
     if(choice==='1') return await call.go_to_folder('/1');
     if(choice==='2') return await call.go_to_folder('/2');
     if(choice==='3') return await call.go_to_folder('/3');
+
+    console.warn('[MAIN_MENU_BAD_CHOICE]', JSON.stringify({choice}));
     return await call.go_to_folder('/');
   }catch(error){
     const name=String(error?.name||'');
     const message=String(error?.message||'');
     if(error instanceof ExitError || /Hangup|Exit/i.test(name+' '+message)) return;
     console.error('[MAIN_MENU_ERROR]',error?.stack||error);
-    try { return await call.go_to_folder('/'); } catch {}
+    try {
+      return await call.id_list_message([{
+        type:'text',
+        data:'מצטערים, הייתה תקלה זמנית, נסו שוב',
+        removeInvalidChars:true
+      }], {removeInvalidChars:true});
+    } catch {}
   }
 }
 
