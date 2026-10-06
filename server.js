@@ -2,7 +2,7 @@ import express from 'express';
 import { GoogleGenAI, Modality } from '@google/genai';
 import { YemotRouter, ExitError } from 'yemot-router2';
 import YemotApi from 'yemot-api';
-import { registerZmanimRoute, configureZmanimExtension } from './zmanim-ivr.js';
+import { registerZmanimRoute, configureZmanimExtension, fetchNedarimZmanim } from './zmanim-ivr.js';
 
 if (process.loadEnvFile) { try { process.loadEnvFile(); } catch {} }
 
@@ -420,24 +420,6 @@ app.get('/api/logs',(req,res)=>res.json({
   }
 }));
 
-app.get('/api/diag-gemini-hebrew-20261006',async(req,res)=>{
-  const testAudioUrl='https://raw.githubusercontent.com/imvladikon/wav2vec2-hebrew/main/samples/bereshit011.wav';
-  try{
-    console.log('[DIAG_AUDIO_DOWNLOAD_START]',testAudioUrl);
-    const r=await timeout(fetch(testAudioUrl),25000,'diagnostic audio download');
-    if(!r.ok) throw new Error('Diagnostic audio HTTP '+r.status);
-    const buf=Buffer.from(await r.arrayBuffer());
-    console.log('[DIAG_AUDIO_DOWNLOADED]',JSON.stringify({bytes:buf.length,mimeType:detectAudioMime(buf)}));
-    const transcript=await transcribeSpeech(buf);
-    const zmanim=await fetchNedarimZmanim('נתיבות יובל');
-    console.log('[DIAG_AUDIO_OK]',JSON.stringify({transcript,zmanimCount:zmanim.items?.length||0}));
-    res.json({ok:true,transcript,zmanimCount:zmanim.items?.length||0});
-  }catch(e){
-    console.error('[DIAG_AUDIO_FAIL]',e?.stack||e);
-    res.status(500).json({ok:false,error:String(e?.message||e)});
-  }
-});
-
 app.post('/api/test-ai',async(req,res)=>{
   let s;
   try{
@@ -474,5 +456,23 @@ app.listen(port,()=>{
     publicUrl: process.env.ZMANIM_PUBLIC_URL || process.env.PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL,
     extension: process.env.ZMANIM_EXTENSION || '1'
   }).catch(e=>console.error('[ZMANIM_CONFIG_FATAL]',e?.message||e));
+
+  // זמני: בדיקת קצה-לקצה של הורדת אודיו ציבורי -> Gemini -> נדרים.
+  // תוסר מיד לאחר אימות מוצלח.
+  (async()=>{
+    const testAudioUrl='https://raw.githubusercontent.com/imvladikon/wav2vec2-hebrew/main/samples/bereshit011.wav';
+    try{
+      console.log('[DIAG_AUDIO_DOWNLOAD_START]',testAudioUrl);
+      const r=await timeout(fetch(testAudioUrl),25000,'diagnostic audio download');
+      if(!r.ok) throw new Error('Diagnostic audio HTTP '+r.status);
+      const buf=Buffer.from(await r.arrayBuffer());
+      console.log('[DIAG_AUDIO_DOWNLOADED]',JSON.stringify({bytes:buf.length,mimeType:detectAudioMime(buf)}));
+      const transcript=await transcribeSpeech(buf);
+      const zmanim=await fetchNedarimZmanim('נתיבות יובל');
+      console.log('[DIAG_AUDIO_OK]',JSON.stringify({transcript,zmanimCount:zmanim.items?.length||0}));
+    }catch(e){
+      console.error('[DIAG_AUDIO_FAIL]',e?.stack||e);
+    }
+  })();
 });
 
