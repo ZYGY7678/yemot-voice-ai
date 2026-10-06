@@ -474,64 +474,93 @@ export function formatZmanimForPhone(data) {
   return cleanText(parts.join(' '));
 }
 
+function parseCombinedLocation(text) {
+  const value = cleanText(text)
+    .replace(/[,،;；]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // Preferred format: "יישוב רחוב שם-הרחוב".
+  const match = value.match(/^(.+?)\s+(?:רחוב\s+)(.+)$/);
+  if (match) {
+    const city = cleanText(match[1]);
+    const street = cleanText(match[2]);
+    if (city && street) return {city, street};
+  }
+
+  // Accept "יישוב, רחוב, שם הרחוב" even when punctuation was removed oddly.
+  const loose = value.match(/^(.+?)\s+רחוב\s+(.+)$/);
+  if (loose) {
+    const city = cleanText(loose[1]);
+    const street = cleanText(loose[2]);
+    if (city && street) return {city, street};
+  }
+
+  return null;
+}
+
 export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech}) {
   router.all('/yemot/zmanim', async call => {
     try {
-      console.log('[ZMANIM_IVR] incoming call - Yemot voice transcription');
+      console.log('[ZMANIM_IVR] incoming call - combined city + street recording');
 
       const welcome = 'שלום, הגעתם לקו המניין הקרוב אליך של נדרים פלוס. פותח על ידי חייא שיאומי ממתמחים טופ.';
 
-      const readVoiceText = async (prompt, valName) => {
+      let address = null;
+
+      for (let attempt = 0; attempt < 3 && !address; attempt++) {
+        const prompt =
+          attempt === 0
+            ? welcome + ' הקליטו עכשיו בהקלטה אחת: קודם אמרו את שם היישוב, אחר כך אמרו את המילה רחוב, ואז את שם הרחוב. לדוגמה: נתיבות, רחוב יובל. לאחר מכן לחצו סולמית.'
+            : 'לא הצלחתי לזהות בוודאות את היישוב והרחוב. הקליטו שוב בהקלטה אחת: שם היישוב, המילה רחוב, ואז שם הרחוב. לאחר מכן לחצו סולמית.';
+
         const recordPath = await call.read(
           [{type:'text', data:prompt}],
           'record',
           {
             min_length: 1,
-            max_length: 10,
+            max_length: 20,
             no_confirm_menu: true,
             save_on_hangup: false
           }
         );
 
-        if (!recordPath) throw new Error('לא התקבלה הקלטה עבור ' + valName);
+        if (!recordPath) throw new Error('לא התקבלה הקלטה של יישוב ורחוב');
 
         const started = Date.now();
         const audio = await downloadRecording(String(recordPath));
         console.log('[ZMANIM_RECORDING_DOWNLOADED]', JSON.stringify({
-          field: valName,
+          field: 'city_street',
           path: String(recordPath),
           bytes: audio.length,
           download_ms: Date.now() - started
         }));
 
-        const text = await transcribeSpeech(audio);
-        const value = cleanText(text);
-        if (!value) throw new Error('Gemini לא החזיר תמלול עבור ' + valName);
-
+        const transcript = cleanText(await transcribeSpeech(audio));
         console.log('[ZMANIM_GEMINI_TRANSCRIPTION]', JSON.stringify({
-          field: valName,
-          value
+          field: 'city_street',
+          value: transcript
         }));
 
-        return value;
-      };
-
-      const confirmTranscription = async (label, value, valName) => {
-        const safeValue = cleanText(value);
-        if (!safeValue || safeValue === 'None') {
-          throw new Error('ימות לא החזיר תמלול עבור ' + label);
+        address = parseCombinedLocation(transcript);
+        if (!address) {
+          console.warn('[ZMANIM_COMBINED_PARSE_FAIL]', JSON.stringify({
+            attempt: attempt + 1,
+            transcript
+          }));
+          continue;
         }
 
-        console.log('[ZMANIM_TRANSCRIPTION]', JSON.stringify({
-          field: label,
-          value: safeValue
+        console.log('[ZMANIM_ADDRESS_PARSED]', JSON.stringify({
+          city: address.city,
+          street: address.street
         }));
 
         const answer = await call.read(
-          [{type:'text', data: 'שמעתי: ' + safeValue + '. להמשיך הקישו 1. להקליט מחדש הקישו 2.'}],
+          [{type:'text', data:'שמעתי: יישוב ' + address.city + ', רחוב ' + address.street + '. להמשיך הקישו 1. להקליט מחדש הקישו 2.'}],
           'tap',
           {
-            val_name: valName + '_confirm',
+            val_name: 'city_street_confirm_' + attempt,
             max_digits: 1,
             min_digits: 1,
             sec_wait: 15,
@@ -542,55 +571,35 @@ export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech
           }
         );
 
-        return cleanText(answer) === '2' ? null : safeValue;
-      };
-
-      const getVoiceValue = async (label, prompt, valName) => {
-        for (let attempt = 0; attempt < 3; attempt++) {
-          const value = await readVoiceText(prompt, valName + '_' + attempt);
-          const confirmed = await confirmTranscription(label, value, valName + '_' + attempt);
-          if (confirmed) return confirmed;
+        if (cleanText(answer) === '2') {
+          address = null;
+          continue;
         }
-        throw new Error('לא התקבל אישור לתמלול עבור ' + label);
-      };
 
-      const city = await getVoiceValue(
-        'יישוב',
-        welcome + ' אמרו בקול ברור את שם היישוב. בסיום הדיבור המערכת תמלל ותגיד לכם מה היא שמעה.',
-        'city'
-      );
+        const location = cleanText(address.city + ' ' + address.street);
+        console.log('[ZMANIM_LOCATION_TRANSCRIBED]', location);
 
-      console.log('[ZMANIM_CITY_TRANSCRIBED]', city);
+        const result = await fetchNedarimZmanim(location);
+        const message = formatZmanimForPhone(result);
 
-      const street = await getVoiceValue(
-        'רחוב',
-        'עכשיו אמרו בקול ברור את שם הרחוב. בסיום הדיבור המערכת תמלל ותגיד לכם מה היא שמעה.',
-        'street'
-      );
+        console.log('[ZMANIM_RESULT]', JSON.stringify({
+          city: address.city,
+          street: address.street,
+          location,
+          count: result.items?.length || 0
+        }));
 
-      console.log('[ZMANIM_STREET_TRANSCRIBED]', street);
+        return await call.id_list_message([
+          {type:'text', data:message}
+        ]);
+      }
 
-      const location = cleanText(city + ' ' + street);
-      console.log('[ZMANIM_LOCATION_TRANSCRIBED]', location);
-
-      const result = await fetchNedarimZmanim(location);
-      const message = formatZmanimForPhone(result);
-
-      console.log('[ZMANIM_RESULT]', JSON.stringify({
-        city,
-        street,
-        location,
-        count: result.items?.length || 0
-      }));
-
-      return await call.id_list_message(
-        [{type:'text', data:message}]
-      );
+      throw new Error('לא ניתן היה לזהות יישוב ורחוב מתוך ההקלטה');
     } catch (error) {
       console.error('[ZMANIM_IVR_ERROR]', error?.stack || error);
       try {
         return await call.id_list_message([
-          {type:'text', data:'מצטערים, לא הצלחתי לקבל כרגע את זמני התפילות. נסו שוב בעוד רגע.'}
+          {type:'text', data:'מצטערים, לא הצלחתי לקבל כרגע את היישוב והרחוב. נסו שוב.'}
         ]);
       } catch {}
     }
