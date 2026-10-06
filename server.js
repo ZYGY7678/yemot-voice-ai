@@ -454,7 +454,7 @@ async function callHandler(call) {
 }
 
 router.all('/yemot',callHandler);
-registerZmanimRoute(router, {downloadRecording, transcribeSpeech});
+registerZmanimRoute(router, {downloadRecording, transcribeSpeech, incomingApiParam});
 app.use('/',router);
 
 function auth(req,res,next){
