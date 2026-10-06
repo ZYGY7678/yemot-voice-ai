@@ -276,14 +276,36 @@ export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech
 
       const welcome = 'שלום, הגעתם לקו המניין הקרוב אליך של נדרים פלוס. פותח על ידי חייא שיאומי ממתמחים טופ.';
 
+      async function recordWithAsterisk(prompt, label, attempt) {
+        const valName = 'zmanim_' + label + '_' + attempt;
+        const spokenPrompt = String(prompt + (attempt > 1 ? ' נסו שוב.' : '')).replace(/[.\\-"'&|]/g, '');
+        const recordOps = [
+          valName,
+          'no',
+          'record',
+          '',
+          '',
+          '*',
+          'no',
+          'no',
+          '1',
+          '30'
+        ].join(',');
+        console.log('[ZMANIM_' + label.toUpperCase() + '_RECORD_START]', valName);
+        call.send('read=' + spokenPrompt + '=' + recordOps);
+        await call.blockRunningUntilNextRequest(90000);
+        const recording = call.values[valName];
+        if (!recording) throw new Error('No ' + label + ' recording received');
+        return recording;
+      }
+
       async function recordAndConfirm(prompt, label, transcriptionPrompt) {
         for (let attempt = 1; attempt <= 3; attempt++) {
-          const recording = await call.read(
-            [{type:'text', data:prompt + (attempt > 1 ? ' נסו שוב.' : '')}],
-            'record',
-            {min_length:1, max_length:8, no_confirm_menu:true, save_on_hangup:false}
+          const recording = await recordWithAsterisk(
+            prompt + ' בסיום ההקלטה לחצו כוכבית.',
+            label,
+            attempt
           );
-          if (!recording) throw new Error('No ' + label + ' recording received');
 
           console.log('[ZMANIM_' + label.toUpperCase() + '_RECORDING]', String(recording));
           const text = cleanText(await transcribeSpeech(
