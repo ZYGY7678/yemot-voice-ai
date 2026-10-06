@@ -688,3 +688,53 @@ export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech
     }
   });
 }
+
+export async function configureZmanimExtension({token, publicUrl, extension = '1'} = {}) {
+  const resolvedToken = String(token || process.env.ZMANIM_YEMOT_TOKEN || '').trim();
+  const base = String(publicUrl || process.env.ZMANIM_PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || '').replace(/\/$/, '');
+  if (!resolvedToken || !base) {
+    console.warn('[ZMANIM_CONFIG] missing token or public URL');
+    return { ok: false, error: 'missing token or public URL' };
+  }
+
+  const params = new URLSearchParams({
+    token: resolvedToken,
+    path: 'ivr2:/' + String(extension),
+    type: 'api',
+    api_link: base + '/yemot/zmanim',
+    api_url_post: 'yes',
+    api_wait: 'yes',
+    api_wait_play: 'no',
+    api_wait_answer_music_on_hold: 'no',
+    api_timeout: '90',
+    tts_rate: '2',
+    rate: '2',
+    api_add_0: 'YemotToken=' + resolvedToken,
+    api_add_2: 'DetailsTxt=yes'
+  });
+
+  // Keep the Gemini key out of source control. When the secret is added to
+  // Render, it is forwarded to Yemot as GeminiKey, matching the FreeIVR post.
+  const configuredGeminiKey = String(
+    process.env.ZMANIM_TRANSCRIPTION_GEMINI_KEY ||
+    process.env.GEMINI_TRANSCRIPTION_API_KEY ||
+    ''
+  ).trim();
+  if (configuredGeminiKey) {
+    params.set('api_add_1', 'GeminiKey=' + configuredGeminiKey);
+  }
+
+  const response = await fetch('https://www.call2all.co.il/ym/api/UpdateExtension?' + params);
+  const body = await response.text();
+  let parsed = body;
+  try { parsed = JSON.parse(body); } catch {}
+  const ok = response.ok && !(typeof parsed === 'string' && /error|שגיאה/i.test(parsed));
+  console.log('[ZMANIM_CONFIG]', JSON.stringify({
+    ok,
+    status: response.status,
+    extension,
+    api: base + '/yemot/zmanim',
+    response: typeof parsed === 'string' ? parsed.slice(0, 500) : parsed
+  }));
+  return { ok, status: response.status, response: parsed };
+}
