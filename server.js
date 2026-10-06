@@ -2,6 +2,7 @@ import express from 'express';
 import { GoogleGenAI, Modality } from '@google/genai';
 import { YemotRouter, ExitError } from 'yemot-router2';
 import YemotApi from 'yemot-api';
+import { registerZmanimRoute, configureZmanimExtension } from './zmanim-ivr.js';
 
 if (process.loadEnvFile) { try { process.loadEnvFile(); } catch {} }
 
@@ -238,6 +239,37 @@ async function liveTurn(live, buf) {
   return result;
 }
 
+
+async function transcribeSpeech(buf) {
+  let last;
+  for (const apiKey of apiKeys) {
+    const ai = new GoogleGenAI({apiKey});
+    for (const model of AUDIO_MODELS) {
+      try {
+        const response = await timeout(ai.models.generateContent({
+          model,
+          contents:[{
+            role:'user',
+            parts:[
+              {text:'האזן להקלטה המצורפת. החזר רק את שם היישוב או הכתובת שהמתקשר אמר בעברית. בלי הסברים, בלי סימני פיסוק מיותרים. אם נאמר שם עיר בלבד, החזר רק את שם העיר.'},
+              {inlineData:{mimeType:'audio/wav',data:buf.toString('base64')}}
+            ]
+          }],
+          config:{thinkingConfig:{thinkingLevel:'low'}}
+        }),15000,'Gemini speech transcription');
+        const text = clean(response?.text||'');
+        if (!text) throw new Error('Empty transcription');
+        console.log('[ZMANIM_TRANSCRIPTION_OK]',model);
+        return text;
+      } catch (e) {
+        last = e;
+        console.error('[ZMANIM_TRANSCRIPTION_FAIL]',model,String(e?.message||e));
+      }
+    }
+  }
+  throw last || new Error('No Gemini API key available');
+}
+
 async function answerAudioFile(buf, history=[]) {
   let last;
   for (const apiKey of apiKeys) {
@@ -349,6 +381,7 @@ async function callHandler(call) {
 }
 
 router.all('/yemot',callHandler);
+registerZmanimRoute(router, {downloadRecording, transcribeSpeech});
 app.use('/',router);
 
 function auth(req,res,next){
@@ -391,4 +424,12 @@ process.on('unhandledRejection',e=>{if(!(e instanceof ExitError))console.error(e
 process.on('uncaughtException',e=>{if(!(e instanceof ExitError))console.error(e)});
 
 const port=process.env.PORT||3000;
-app.listen(port,()=>{ console.log('Server running on port '+port); disableYemotWaitMusic(); });
+app.listen(port,()=>{ 
+  console.log('Server running on port '+port); 
+  disableYemotWaitMusic(); 
+  configureZmanimExtension({
+    token: process.env.ZMANIM_YEMOT_TOKEN,
+    publicUrl: process.env.ZMANIM_PUBLIC_URL || process.env.PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL,
+    extension: process.env.ZMANIM_EXTENSION || '1'
+  }).catch(e=>console.error('[ZMANIM_CONFIG_FATAL]',e?.message||e));
+});
