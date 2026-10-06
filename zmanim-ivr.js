@@ -189,9 +189,48 @@ function parseDirectResultTimes(raw) {
 async function geocodeLocation(location) {
   const aliases = {
     'ניבות': 'נתיבות',
-    'נתיבו': 'נתיבות'
+    'נתיבו': 'נתיבות',
+    'נתיות': 'נתיבות'
   };
+
   const normalized = aliases[cleanText(location)] || cleanText(location);
+  const cityText = normalized.split(/\s+/).slice(0, 3).join(' ');
+
+  // Built-in Israeli city fallback. This keeps the service working even when
+  // public geocoding providers rate-limit Render. The search radius on Nedarim
+  // is 5km, so a city-center coordinate still returns local minyanim.
+  const cityCoordinates = {
+    'נתיבות': [34.5947, 31.4234],
+    'בני ברק': [34.8338, 32.0840],
+    'ירושלים': [35.2137, 31.7683],
+    'תל אביב': [34.7818, 32.0853],
+    'פתח תקווה': [34.8878, 32.0870],
+    'אשדוד': [34.6435, 31.8014],
+    'אשקלון': [34.5715, 31.6688],
+    'באר שבע': [34.7913, 31.2518],
+    'רחובות': [34.8113, 31.8948],
+    'ראשון לציון': [34.7925, 31.9730],
+    'חולון': [34.7798, 32.0114],
+    'בת ים': [34.7503, 32.0171],
+    'רמת גן': [34.8106, 32.0809],
+    'גבעתיים': [34.8125, 32.0714],
+    'הרצליה': [34.8423, 32.1663],
+    'נתניה': [34.8569, 32.3215],
+    'כפר סבא': [34.9078, 32.1780],
+    'רעננה': [34.8706, 32.1848],
+    'מודיעין': [34.9992, 31.8996],
+    'בית שמש': [34.9889, 31.7456],
+    'צפת': [35.4960, 32.9656],
+    'טבריה': [35.5300, 32.7922],
+    'חיפה': [34.9896, 32.7940],
+    'קריית אתא': [35.1020, 32.8117],
+    'עפולה': [35.2897, 32.6070]
+  };
+
+  const cityKey = Object.keys(cityCoordinates).find(name =>
+    normalized === name || normalized.startsWith(name + ' ')
+  );
+
   const providers = [
     {
       name: 'photon',
@@ -203,12 +242,12 @@ async function geocodeLocation(location) {
       parse: data => data?.features?.[0]?.geometry?.coordinates
     },
     {
-      name: 'nominatim',
+      name: 'nominatim-city',
       url: 'https://nominatim.openstreetmap.org/search?' + new URLSearchParams({
         format: 'jsonv2',
         limit: '1',
         countrycodes: 'il',
-        q: normalized
+        q: cityText
       }),
       parse: data => {
         const row = Array.isArray(data) ? data[0] : null;
@@ -228,6 +267,7 @@ async function geocodeLocation(location) {
       });
       if (!response.ok) {
         lastError = new Error(provider.name + ' HTTP ' + response.status);
+        console.warn('[ZMANIM_GEOCODE_PROVIDER]', provider.name, response.status);
         continue;
       }
       const data = await response.json();
@@ -251,6 +291,21 @@ async function geocodeLocation(location) {
       lastError = error;
       console.error('[ZMANIM_GEOCODE_FAIL]', provider.name, error?.message || error);
     }
+  }
+
+  if (cityKey) {
+    const [lng, lat] = cityCoordinates[cityKey];
+    console.warn('[ZMANIM_GEOCODE_FALLBACK_CITY]', JSON.stringify({
+      input: location,
+      city: cityKey,
+      lat,
+      lng
+    }));
+    return {
+      lat,
+      lng,
+      displayName: cityKey + ' (city fallback)'
+    };
   }
 
   throw lastError || new Error('לא נמצאו קואורדינטות לכתובת');
