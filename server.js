@@ -507,5 +507,18 @@ app.listen(port,()=>{
     publicUrl: process.env.ZMANIM_PUBLIC_URL || process.env.PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL,
     extension: process.env.ZMANIM_EXTENSION || '1'
   }).catch(e=>console.error('[ZMANIM_CONFIG_FATAL]',e?.message||e));
+  ;(async()=>{
+    try{
+      const verify=await fetchNedarimZmanim('נתיבות יובל');
+      console.log('[LIVE_VERIFY_OK]',JSON.stringify({
+        location:'נתיבות יובל',
+        count:verify.items?.length||0,
+        items:verify.items,
+        message:formatZmanimForPhone(verify)
+      }));
+    }catch(e){
+      console.error('[LIVE_VERIFY_FAIL]',e?.stack||e);
+    }
+  })();
 });
 
