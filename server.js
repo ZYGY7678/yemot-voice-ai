@@ -10,11 +10,22 @@ const app = express();
 app.use(express.urlencoded({extended:true}));
 app.use(express.json());
 
-const apiKeys = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '')
-  .split(',').map(x => x.trim()).filter(Boolean);
+const apiKeys = [
+  process.env.GEMINI_API_KEYS || '',
+  process.env.GEMINI_API_KEY || '',
+  ...Object.keys(process.env)
+    .filter(k => /^GEMINI_(?:API_)?KEY_\d+$/i.test(k))
+    .sort((a,b) => a.localeCompare(b, undefined, {numeric:true}))
+    .map(k => process.env[k] || '')
+]
+  .flatMap(value => String(value).split(/[,
+;]+/))
+  .map(x => x.trim())
+  .filter(Boolean)
+  .filter((x,i,arr) => arr.indexOf(x) === i);
 
 const LIVE_MODEL = 'gemini-3.8-live';
-const AUDIO_MODELS = ['gemini-3.6-flash','gemini-3.5-flash-lite'];
+const AUDIO_MODELS = ['gemini-2.5-flash-lite','gemini-2.5-flash'];
 const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 55000);
 const DASHBOARD_PASSWORD = String(process.env.DASHBOARD_PASSWORD || '1234');
 const SYSTEM = [
@@ -242,6 +253,7 @@ async function liveTurn(live, buf) {
 
 async function transcribeSpeech(buf) {
   let last;
+  console.log('[ZMANIM_TRANSCRIPTION_KEYS]', apiKeys.length);
   for (const apiKey of apiKeys) {
     const ai = new GoogleGenAI({apiKey});
     for (const model of AUDIO_MODELS) {
