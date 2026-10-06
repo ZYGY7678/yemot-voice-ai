@@ -278,19 +278,13 @@ export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech
 
       // קלט בהקלדה/מקלדת עברית של ימות המשיח. סולמית מסיימת את הקלט.
       const city = cleanText(await call.read(
-        [{type:'text', data: welcome + ' אנא הקלידו את שם היישוב, ובסיום הקישו סולמית.'}],
-        'tap',
+        [{type:'text', data: welcome + ' אנא אמרו עכשיו את שם היישוב. לאחר שתסיימו לדבר, ימות המשיח יתמלל את דבריכם.'}],
+        'stt',
         {
-          val_name: 'city',
-          max_digits: '*',
-          min_digits: 1,
-          sec_wait: 15,
-          empty_val: 'None',
-          typing_playback_mode: 'HebrewKeyboard',
-          block_change_keyboard: true,
-          allow_empty: false,
-          block_asterisk_key: false,
-          block_zero_key: false
+          lang: 'he-IL',
+          block_typing: true,
+          use_records_recognition_engine: false,
+          allow_empty: false
         }
       ));
 
@@ -302,19 +296,13 @@ export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech
       console.log('[ZMANIM_CITY_TYPED]', city);
 
       const street = cleanText(await call.read(
-        [{type:'text', data:'תודה. עכשיו הקלידו את שם הרחוב, ובסיום הקישו סולמית.'}],
-        'tap',
+        [{type:'text', data:'תודה. עכשיו אמרו את שם הרחוב. לאחר שתסיימו לדבר, ימות המשיח יתמלל גם אותו.'}],
+        'stt',
         {
-          val_name: 'street',
-          max_digits: '*',
-          min_digits: 1,
-          sec_wait: 15,
-          empty_val: 'None',
-          typing_playback_mode: 'HebrewKeyboard',
-          block_change_keyboard: true,
-          allow_empty: false,
-          block_asterisk_key: false,
-          block_zero_key: false
+          lang: 'he-IL',
+          block_typing: true,
+          use_records_recognition_engine: false,
+          allow_empty: false
         }
       ));
 
