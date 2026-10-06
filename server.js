@@ -2,7 +2,7 @@ import express from 'express';
 import { GoogleGenAI, Modality } from '@google/genai';
 import { YemotRouter, ExitError } from 'yemot-router2';
 import YemotApi from 'yemot-api';
-import { registerZmanimRoute, configureZmanimExtension } from './zmanim-ivr.js';
+import { registerZmanimRoute, configureZmanimExtension, fetchNedarimZmanim, formatZmanimForPhone } from './zmanim-ivr.js';
 
 if (process.loadEnvFile) { try { process.loadEnvFile(); } catch {} }
 
@@ -474,6 +474,16 @@ app.post('/api/test-ai',async(req,res)=>{
     res.status(500).json({ok:false,error:e.message});
   }finally{
     try{s?.session?.close?.()}catch{}
+  }
+});
+app.get('/api/test-zmanim-live',async(req,res)=>{
+  const location=String(req.query?.location||'נתיבות יובל').trim();
+  try{
+    const data=await fetchNedarimZmanim(location);
+    res.json({ok:true,location,count:data.items?.length||0,items:data.items,message:formatZmanimForPhone(data)});
+  }catch(e){
+    console.error('[LIVE_VERIFY_FAIL]',e?.stack||e);
+    res.status(500).json({ok:false,location,error:String(e?.message||e)});
   }
 });
 app.get('/health',(req,res)=>res.json({
