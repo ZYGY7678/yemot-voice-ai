@@ -200,17 +200,34 @@ export async function fetchNedarimZmanim(locationText) {
       timeout: 35000
     });
 
-    const input = await findAddressInput(page);
-    if (!input) throw new Error('לא נמצא שדה חיפוש כתובת בנדרים פלוס');
-
-    const fields = await page.$('input, textarea');
-    const field = fields[input.index];
-    if (!field) throw new Error('לא ניתן לגשת לשדה חיפוש הכתובת');
-    await field.click();
-    await page.keyboard.down('Control').catch(()=>{});
-    await page.keyboard.press('A').catch(()=>{});
-    await page.keyboard.up('Control').catch(()=>{});
-    await field.type(location, {delay: 10});
+    const filled = await page.evaluate((value) => {
+      const keywords = ['חיפוש כתובת', 'כתובת', 'חיפוש', 'address', 'search'];
+      const candidates = [...document.querySelectorAll('input, textarea')];
+      const ranked = candidates.map((el) => {
+        const hay = [
+          el.getAttribute('placeholder') || '',
+          el.getAttribute('aria-label') || '',
+          el.getAttribute('title') || '',
+          el.getAttribute('name') || '',
+          el.id || ''
+        ].join(' ').toLowerCase();
+        let score = 0;
+        for (const k of keywords) if (hay.includes(k.toLowerCase())) score += 10;
+        if ((el.getAttribute('type') || '').toLowerCase() === 'text') score += 2;
+        return {el, score};
+      }).sort((a,b) => b.score - a.score);
+      const el = ranked[0]?.el;
+      if (!el) return false;
+      el.focus();
+      const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+      if (setter) setter.call(el, value);
+      else el.value = value;
+      el.dispatchEvent(new Event('input', {bubbles:true}));
+      el.dispatchEvent(new Event('change', {bubbles:true}));
+      return true;
+    }, location);
+    if (!filled) throw new Error('לא ניתן למלא את שדה חיפוש הכתובת');
 
     await new Promise(r => setTimeout(r, 1200));
     await acceptAutocomplete(page);
