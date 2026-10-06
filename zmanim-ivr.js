@@ -477,21 +477,20 @@ export function formatZmanimForPhone(data) {
 export function registerZmanimRoute(router, {downloadRecording}) {
   router.all('/yemot/zmanim', async call => {
     try {
-      console.log('[ZMANIM_IVR] incoming call - Yemot Hebrew text keypad');
+      console.log('[ZMANIM_IVR] incoming call - Yemot voice transcription');
 
       const welcome = 'שלום, הגעתם לקו המניין הקרוב אליך של נדרים פלוס. פותח על ידי חייא שיאומי ממתמחים טופ.';
 
-      const readHebrewText = async (prompt, valName) => {
+      const readVoiceText = async (prompt, valName) => {
         const value = await call.read(
           [{type:'text', data:prompt}],
-          'tap',
+          'voice',
           {
             val_name: valName,
             max_digits: '*',
             min_digits: 1,
             sec_wait: 15,
             empty_val: 'None',
-            typing_playback_mode: 'HebrewKeyboard',
             block_change_keyboard: true,
             block_asterisk_key: false
           }
@@ -499,34 +498,62 @@ export function registerZmanimRoute(router, {downloadRecording}) {
         return cleanText(value);
       };
 
-      const city = await readHebrewText(
-        welcome + ' אנא הקלידו את שם היישוב, ובסיום הקישו סולמית.',
+      const confirmTranscription = async (label, value, valName) => {
+        const safeValue = cleanText(value);
+        if (!safeValue || safeValue === 'None') {
+          throw new Error('ימות לא החזיר תמלול עבור ' + label);
+        }
+
+        console.log('[ZMANIM_TRANSCRIPTION]', JSON.stringify({
+          field: label,
+          value: safeValue
+        }));
+
+        const answer = await call.read(
+          [{type:'text', data: 'שמעתי: ' + safeValue + '. להמשיך הקישו 1. להקליט מחדש הקישו 2.'}],
+          'tap',
+          {
+            val_name: valName + '_confirm',
+            max_digits: 1,
+            min_digits: 1,
+            sec_wait: 15,
+            empty_val: 'None',
+            typing_playback_mode: 'Number',
+            block_change_keyboard: true,
+            block_asterisk_key: false
+          }
+        );
+
+        return cleanText(answer) === '2' ? null : safeValue;
+      };
+
+      const getVoiceValue = async (label, prompt, valName) => {
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const value = await readVoiceText(prompt, valName + '_' + attempt);
+          const confirmed = await confirmTranscription(label, value, valName + '_' + attempt);
+          if (confirmed) return confirmed;
+        }
+        throw new Error('לא התקבל אישור לתמלול עבור ' + label);
+      };
+
+      const city = await getVoiceValue(
+        'יישוב',
+        welcome + ' אמרו בקול ברור את שם היישוב. בסיום הדיבור המערכת תמלל ותגיד לכם מה היא שמעה.',
         'city'
       );
 
-      if (!city || city === 'None') {
-        return await call.id_list_message(
-          [{type:'text', data:'לא התקבל שם יישוב. אנא נסו שוב.'}]
-        );
-      }
+      console.log('[ZMANIM_CITY_TRANSCRIBED]', city);
 
-      console.log('[ZMANIM_CITY_TYPED]', city);
-
-      const street = await readHebrewText(
-        'תודה. עכשיו הקלידו את שם הרחוב, ובסיום הקישו סולמית.',
+      const street = await getVoiceValue(
+        'רחוב',
+        'עכשיו אמרו בקול ברור את שם הרחוב. בסיום הדיבור המערכת תמלל ותגיד לכם מה היא שמעה.',
         'street'
       );
 
-      if (!street || street === 'None') {
-        return await call.id_list_message(
-          [{type:'text', data:'לא התקבל שם רחוב. אנא נסו שוב.'}]
-        );
-      }
-
-      console.log('[ZMANIM_STREET_TYPED]', street);
+      console.log('[ZMANIM_STREET_TRANSCRIBED]', street);
 
       const location = cleanText(city + ' ' + street);
-      console.log('[ZMANIM_LOCATION_TYPED]', location);
+      console.log('[ZMANIM_LOCATION_TRANSCRIBED]', location);
 
       const result = await fetchNedarimZmanim(location);
       const message = formatZmanimForPhone(result);
