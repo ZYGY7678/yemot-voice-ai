@@ -301,11 +301,9 @@ export function registerZmanimRoute(router, {downloadRecording}) {
       );
 
       if (!city || city === 'None') {
-        await call.id_list_message(
-          [{type:'text', data:'לא התקבל שם יישוב. אנא נסו שוב.'}],
-          {prependToNextAction:true}
+        return await call.id_list_message(
+          [{type:'text', data:'לא התקבל שם יישוב. אנא נסו שוב.'}]
         );
-        return;
       }
 
       console.log('[ZMANIM_CITY_TYPED]', city);
@@ -316,11 +314,9 @@ export function registerZmanimRoute(router, {downloadRecording}) {
       );
 
       if (!street || street === 'None') {
-        await call.id_list_message(
-          [{type:'text', data:'לא התקבל שם רחוב. אנא נסו שוב.'}],
-          {prependToNextAction:true}
+        return await call.id_list_message(
+          [{type:'text', data:'לא התקבל שם רחוב. אנא נסו שוב.'}]
         );
-        return;
       }
 
       console.log('[ZMANIM_STREET_TYPED]', street);
@@ -338,16 +334,15 @@ export function registerZmanimRoute(router, {downloadRecording}) {
         count: result.items?.length || 0
       }));
 
-      await call.id_list_message(
-        [{type:'text', data:message}],
-        {prependToNextAction:true}
+      return await call.id_list_message(
+        [{type:'text', data:message}]
       );
     } catch (error) {
       console.error('[ZMANIM_IVR_ERROR]', error?.stack || error);
       try {
-        await call.id_list_message([
+        return await call.id_list_message([
           {type:'text', data:'מצטערים, לא הצלחתי לקבל כרגע את זמני התפילות. נסו שוב בעוד רגע.'}
-        ], {prependToNextAction:true});
+        ]);
       } catch {}
     }
   });
