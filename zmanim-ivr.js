@@ -12,16 +12,20 @@ function cleanText(value) {
 }
 
 function phoneTtsText(value) {
-  return String(value ?? '')
+  const cleaned = String(value ?? '')
     .replace(/\r/g, '')
     .replace(/[.。]+/g, ',')
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]+/g, ' ')
     .replace(/[^\p{L}\p{N}\s,:]/gu, ' ')
     .replace(/[ \t]+/g, ' ')
     .replace(/ *\n */g, '\n')
-    .replace(/,{2,}/g, ',')
     .replace(/,+\s*\n/g, '\n')
+    .replace(/,{2,}/g, ',')
     .trim();
+
+  // Yemot TTS requires the response to end with punctuation.
+  // A comma gives the required terminator without using periods.
+  return cleaned ? (cleaned.endsWith(',') ? cleaned : cleaned + ',') : ',';
 }
 
 function hebrewTimeSpeech(hhmm) {
@@ -744,7 +748,7 @@ async function chooseSavedSearch(call, savedSearches) {
 
 async function announceSearchWait(call) {
   return await call.read(
-    [{type:'text', data:'רק רגע, אני מחפש את המניינים הקרובים'}],
+    [{type:'text', data:phoneTtsText('רק רגע, אני מחפש את המניינים הקרובים')}],
     'tap',
     {
       val_name:'zmanim_search_notice',
@@ -785,7 +789,7 @@ async function recordAndTranscribeLocation(call, attempt, {downloadRecording, tr
     : 'הקליטו שוב בהקלטה אחת את שם היישוב ואת שם הרחוב, לאחר מכן לחצו סולמית';
 
   const recordPath = await call.read(
-    [{type:'text', data:prompt}],
+    [{type:'text', data:phoneTtsText(prompt)}],
     'record',
     {
       min_length:1,
@@ -1034,12 +1038,6 @@ async function ensureZmanimHoldMusic(token) {
   const name='ZmanimWaitMusic';
   const base='https://www.call2all.co.il/ym/api';
   try{
-    await fetch(base+'/UpdateExtension?'+new URLSearchParams({
-      token,
-      path:folder,
-      type:'playfile'
-    }));
-
     const check=await fetch(base+'/GetMusicOnHoldByPath?'+new URLSearchParams({
       token,
       path:folder
