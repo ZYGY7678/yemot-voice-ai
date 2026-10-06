@@ -480,20 +480,40 @@ function parseCombinedLocation(text) {
     .replace(/\s+/g, ' ')
     .trim();
 
-  // Preferred format: "יישוב רחוב שם-הרחוב".
-  const match = value.match(/^(.+?)\s+(?:רחוב\s+)(.+)$/);
-  if (match) {
-    const city = cleanText(match[1]);
-    const street = cleanText(match[2]);
+  if (!value) return null;
+
+  // Formats such as: "נתיבות רחוב יובל" or "נתיבות, רחוב יובל".
+  const withStreetWord = value.match(/^(.+?)\s+רחוב\s+(.+)$/);
+  if (withStreetWord) {
+    const city = cleanText(withStreetWord[1]);
+    const street = cleanText(withStreetWord[2]);
     if (city && street) return {city, street};
   }
 
-  // Accept "יישוב, רחוב, שם הרחוב" even when punctuation was removed oddly.
-  const loose = value.match(/^(.+?)\s+רחוב\s+(.+)$/);
-  if (loose) {
-    const city = cleanText(loose[1]);
-    const street = cleanText(loose[2]);
-    if (city && street) return {city, street};
+  // The Yemot Hebrew keyboard may return "city street" without the word "רחוב".
+  // Prefer the longest known Israeli city prefix so multi-word cities work too.
+  const knownCities = [
+    'ראשון לציון','פתח תקווה','באר שבע','בני ברק','רמת גן','גבעתיים',
+    'כפר סבא','בית שמש','קריית אתא','תל אביב','בת ים','חולון','חיפה',
+    'אשדוד','אשקלון','רחובות','נתניה','רעננה','הרצליה','מודיעין','ירושלים',
+    'נתיבות','צפת','טבריה','עפולה'
+  ];
+
+  const city = knownCities
+    .filter(name => value === name || value.startsWith(name + ' '))
+    .sort((a,b) => b.length - a.length)[0];
+
+  if (city) {
+    const street = cleanText(value.slice(city.length));
+    if (street) return {city, street};
+  }
+
+  // Last fallback for a simple one-word city: first token is the city.
+  const parts = value.split(/\s+/);
+  if (parts.length >= 2) {
+    const simpleCity = cleanText(parts.shift());
+    const street = cleanText(parts.join(' '));
+    if (simpleCity && street) return {city:simpleCity, street};
   }
 
   return null;
