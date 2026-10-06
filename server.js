@@ -143,6 +143,21 @@ function callerPhone(c) {
   return String(c?.values?.ApiPhone??c?.req?.query?.ApiPhone??c?.req?.body?.ApiPhone??'').trim()||'לא מזוהה';
 }
 
+function incomingApiParam(call, name) {
+  const wanted = String(name || '').toLowerCase();
+  const sources = [call?.values, call?.req?.body, call?.req?.query];
+  for (const source of sources) {
+    if (!source || typeof source !== 'object') continue;
+    for (const [key, value] of Object.entries(source)) {
+      if (String(key).toLowerCase() === wanted && value !== undefined && value !== null) {
+        const text = String(value).trim();
+        if (text) return text;
+      }
+    }
+  }
+  return '';
+}
+
 async function downloadRecording(path) {
   const p=String(path || '').startsWith('ivr2:') ? String(path) : 'ivr2:' + String(path || '');
   const token=String(process.env.YEMOT_API_KEY||'').trim();
@@ -263,99 +278,66 @@ function extractTranscription(response) {
   return clean(values.join(' ') || direct);
 }
 
-async function transcribeSpeech(buf) {
+async function transcribeSpeech(buf, options = {}) {
   let last;
-  const mimeType = detectAudioMime(buf);
-  console.log('[ZMANIM_TRANSCRIPTION_INPUT]', JSON.stringify({bytes:buf.length,mimeType}));
-  console.log('[ZMANIM_TRANSCRIPTION_KEYS]', apiKeys.length);
+  const requestKey = String(options?.geminiKey || '').trim();
+  const keys = [requestKey, ...apiKeys]
+    .filter(Boolean)
+    .filter((x,i,arr) => arr.indexOf(x) === i);
 
-  for (let keyIndex=0; keyIndex<apiKeys.length; keyIndex++) {
-    const apiKey=apiKeys[keyIndex];
+  console.log('[ZMANIM_TRANSCRIPTION_INPUT]', JSON.stringify({
+    bytes: buf.length,
+    mimeType: detectAudioMime(buf),
+    requestKeyProvided: Boolean(requestKey),
+    availableFallbackKeys: apiKeys.length
+  }));
+
+  for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
+    const apiKey = keys[keyIndex];
     const ai = new GoogleGenAI({apiKey});
-    let tempPath='';
+    const models = ['gemini-3.5-flash-lite', 'gemini-3.6-flash'];
 
-    try {
-      tempPath = path.join(os.tmpdir(), 'yemot-audio-' + Date.now() + '-' + Math.random().toString(16).slice(2) + '.bin');
-      await fs.writeFile(tempPath, buf);
-
-      const audioFile = await timeout(
-        ai.files.upload({
-          file: tempPath,
-          config: {mimeType}
-        }),
-        20000,
-        'Gemini File API upload'
-      );
-
-      let uploaded = audioFile;
-      for(let i=0;i<10;i++){
-        if(!uploaded?.state || uploaded.state === 'ACTIVE') break;
-        if(uploaded.state === 'FAILED') throw new Error('Gemini File API processing failed');
-        await new Promise(r=>setTimeout(r,1000));
-        uploaded = await timeout(ai.files.get({name:audioFile.name}),10000,'Gemini File API status');
-      }
-
-      if (!uploaded?.uri) throw new Error('Gemini File API did not return a URI');
-
-      // Official dedicated transcription path.
+    for (const model of models) {
       try {
         const response = await timeout(ai.models.generateContent({
-          model:'gemini-3.5-transcribe',
-          contents:createUserContent([
-            createPartFromUri(uploaded.uri, uploaded.mimeType || mimeType)
-          ]),
-          config:{
-            audioTranscriptionConfig:{
-              languageCodes:['he-IL']
-            }
-          }
-        }),20000,'Gemini 3.5 Transcribe');
+          model,
+          contents:[{
+            role:'user',
+            parts:[
+              {
+                text:'תמלל את ההקלטה בעברית. החזר רק את המילים שנאמרו, ללא הסבר, ללא סימני ציטוט וללא תוספות.'
+              },
+              {
+                inlineData:{
+                  mimeType:detectAudioMime(buf),
+                  data:buf.toString('base64')
+                }
+              }
+            ]
+          }]
+        }), 25000, 'Gemini transcription '+model);
 
         const text = extractTranscription(response);
-        if (text) {
-          console.log('[ZMANIM_TRANSCRIPTION_OK]',JSON.stringify({model:'gemini-3.5-transcribe',keyIndex:keyIndex+1}));
-          return text;
-        }
-        throw new Error('Empty transcription');
-      } catch (transcribeError) {
-        last=transcribeError;
-        console.error('[ZMANIM_TRANSCRIPTION_FAIL]', 'gemini-3.5-transcribe', String(transcribeError?.message||transcribeError));
+        if (!text) throw new Error('Empty transcription');
 
-        // General current audio model fallback.
-        let fallbackText = '';
-        let fallbackLast;
-        for(let attempt=1; attempt<=3; attempt++){
-          try{
-            const response = await timeout(ai.models.generateContent({
-              model:'gemini-3.8-flash',
-              contents:createUserContent([
-                createPartFromUri(uploaded.uri, uploaded.mimeType || mimeType),
-                'תמלל את ההקלטה בעברית. החזר רק את המילים שנאמרו, ללא הסבר.'
-              ])
-            }),20000,'Gemini 3.8 audio transcription');
-            fallbackText = extractTranscription(response);
-            if(fallbackText) break;
-          }catch(err){
-            fallbackLast = err;
-            const msg = String(err?.message || err);
-            console.error('[ZMANIM_GEMINI_FALLBACK_FAIL]', JSON.stringify({attempt, error:msg}));
-            if(!/503|UNAVAILABLE|high demand/i.test(msg) || attempt===3) break;
-            await new Promise(r=>setTimeout(r,1200*attempt));
-          }
-        }
-        if (!fallbackText) throw (fallbackLast || new Error('Empty transcription from Gemini 3.8'));
-        console.log('[ZMANIM_TRANSCRIPTION_OK]',JSON.stringify({model:'gemini-3.8-flash',keyIndex:keyIndex+1}));
-        return fallbackText;
-      }
-    } catch(e) {
-      last=e;
-      console.error('[ZMANIM_TRANSCRIPTION_KEY_FAIL]',JSON.stringify({
-        keyIndex:keyIndex+1,
-        error:String(e?.message||e)
-      }));
-    } finally {
-      if(tempPath){
-        try{await fs.unlink(tempPath);}catch{}
+        console.log('[ZMANIM_TRANSCRIPTION_OK]', JSON.stringify({
+          provider:'Gemini',
+          model,
+          keySource: keyIndex === 0 && requestKey ? 'api_add_GeminiKey' : 'server_fallback',
+          keyIndex: keyIndex + 1
+        }));
+        return text;
+      } catch (error) {
+        last = error;
+        const message = String(error?.message || error);
+        console.error('[ZMANIM_TRANSCRIPTION_FAIL]', JSON.stringify({
+          provider:'Gemini',
+          model,
+          keySource: keyIndex === 0 && requestKey ? 'api_add_GeminiKey' : 'server_fallback',
+          error:message
+        }));
+
+        if (!/404|NOT_FOUND|not found|unsupported/i.test(message)) break;
       }
     }
   }
