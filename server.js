@@ -66,7 +66,7 @@ const apiKeys = [
   .filter((x,i,arr) => arr.indexOf(x) === i);
 
 const LIVE_MODEL = 'gemini-3.8-live';
-const AUDIO_MODELS = ['gemini-2.5-flash-lite','gemini-2.5-flash'];
+const AUDIO_MODELS = ['gemini-3.5-transcribe','gemini-2.5-flash-lite','gemini-2.5-flash'];
 const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 55000);
 const DASHBOARD_PASSWORD = String(process.env.DASHBOARD_PASSWORD || '1234');
 const SYSTEM = [
@@ -233,24 +233,41 @@ async function liveTurn(live, buf) {
 }
 
 
+function detectAudioMime(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 12) return 'audio/wav';
+  const head4 = buf.subarray(0, 4).toString('ascii');
+  const head8 = buf.subarray(8, 12).toString('ascii');
+  if (head4 === 'RIFF' && head8 === 'WAVE') return 'audio/wav';
+  if (head4 === 'OggS') return 'audio/ogg';
+  if (buf.subarray(4, 8).toString('ascii') === 'ftyp') return 'audio/mp4';
+  if (buf.subarray(0, 3).toString('ascii') === 'ID3') return 'audio/mpeg';
+  if ((buf[0] & 0xe0) === 0xe0) return 'audio/mpeg';
+  return 'audio/wav';
+}
+
 async function transcribeSpeech(buf) {
   let last;
+  const mimeType = detectAudioMime(buf);
+  console.log('[ZMANIM_TRANSCRIPTION_INPUT]', JSON.stringify({bytes:buf.length,mimeType}));
   console.log('[ZMANIM_TRANSCRIPTION_KEYS]', apiKeys.length);
   for (const apiKey of apiKeys) {
     const ai = new GoogleGenAI({apiKey});
     for (const model of AUDIO_MODELS) {
       try {
-        const response = await timeout(ai.models.generateContent({
+        const request = {
           model,
           contents:[{
             role:'user',
             parts:[
               {text:'האזן להקלטה המצורפת. החזר רק את שם היישוב או הכתובת שהמתקשר אמר בעברית. בלי הסברים, בלי סימני פיסוק מיותרים. אם נאמר שם עיר בלבד, החזר רק את שם העיר.'},
-              {inlineData:{mimeType:'audio/wav',data:buf.toString('base64')}}
+              {inlineData:{mimeType,data:buf.toString('base64')}}
             ]
-          }],
-          config:{thinkingConfig:{thinkingLevel:'low'}}
-        }),15000,'Gemini speech transcription');
+          }]
+        };
+        if (!model.includes('transcribe')) {
+          request.config = {thinkingConfig:{thinkingLevel:'low'}};
+        }
+        const response = await timeout(ai.models.generateContent(request),20000,'Gemini speech transcription');
         const text = clean(response?.text||'');
         if (!text) throw new Error('Empty transcription');
         console.log('[ZMANIM_TRANSCRIPTION_OK]',model);
@@ -402,6 +419,24 @@ app.get('/api/logs',(req,res)=>res.json({
     memory:Math.round(process.memoryUsage().rss/1024/1024)
   }
 }));
+
+app.get('/api/diag-gemini-hebrew-20261006',async(req,res)=>{
+  const testAudioUrl='https://raw.githubusercontent.com/imvladikon/wav2vec2-hebrew/main/samples/bereshit011.wav';
+  try{
+    console.log('[DIAG_AUDIO_DOWNLOAD_START]',testAudioUrl);
+    const r=await timeout(fetch(testAudioUrl),25000,'diagnostic audio download');
+    if(!r.ok) throw new Error('Diagnostic audio HTTP '+r.status);
+    const buf=Buffer.from(await r.arrayBuffer());
+    console.log('[DIAG_AUDIO_DOWNLOADED]',JSON.stringify({bytes:buf.length,mimeType:detectAudioMime(buf)}));
+    const transcript=await transcribeSpeech(buf);
+    const zmanim=await fetchNedarimZmanim('נתיבות יובל');
+    console.log('[DIAG_AUDIO_OK]',JSON.stringify({transcript,zmanimCount:zmanim.items?.length||0}));
+    res.json({ok:true,transcript,zmanimCount:zmanim.items?.length||0});
+  }catch(e){
+    console.error('[DIAG_AUDIO_FAIL]',e?.stack||e);
+    res.status(500).json({ok:false,error:String(e?.message||e)});
+  }
+});
 
 app.post('/api/test-ai',async(req,res)=>{
   let s;
