@@ -140,6 +140,24 @@ function callerPhone(c) {
   return String(c?.values?.ApiPhone??c?.req?.query?.ApiPhone??c?.req?.body?.ApiPhone??'').trim()||'לא מזוהה';
 }
 
+async function downloadRecording(path) {
+  const p=String(path || '').startsWith('ivr2:') ? String(path) : 'ivr2:' + String(path || '');
+  const token=String(process.env.YEMOT_API_KEY||'').trim();
+  if(token){
+    const u='https://www.call2all.co.il/ym/api/DownloadFile?token='+encodeURIComponent(token)+'&path='+encodeURIComponent(p);
+    const r=await timeout(fetch(u),REQUEST_TIMEOUT_MS,'download recording');
+    if(!r.ok) throw new Error('DownloadFile HTTP '+r.status);
+    return Buffer.from(await r.arrayBuffer());
+  }
+  if(process.env.YEMOT_API_USERNAME&&process.env.YEMOT_API_PASSWORD){
+    const api=new YemotApi(process.env.YEMOT_API_USERNAME,process.env.YEMOT_API_PASSWORD);
+    const r=await timeout(api.download_file(p),REQUEST_TIMEOUT_MS,'download recording');
+    return Buffer.isBuffer(r.data)?r.data:Buffer.from(r.data);
+  }
+  throw new Error('YEMOT credentials are missing');
+}
+
+
 
 async function connectLive() {
   let last;
