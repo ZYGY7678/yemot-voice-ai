@@ -39,14 +39,29 @@ function parseTimesFromText(raw) {
     const matches = [...line.matchAll(timeRe)];
     if (!matches.length) continue;
 
-    const prayerContext = line.match(prayerRe)?.[1]
-      || lines[i - 1]?.match(prayerRe)?.[1]
-      || lines[i + 1]?.match(prayerRe)?.[1];
+    let prayerContext = line.match(prayerRe)?.[1] || '';
+    if (!prayerContext) {
+      for (let d = 1; d <= 4 && !prayerContext; d++) {
+        prayerContext =
+          lines[i - d]?.match(prayerRe)?.[1]
+          || lines[i + d]?.match(prayerRe)?.[1]
+          || '';
+      }
+    }
     if (!prayerContext) continue;
 
-    const context = cleanText(
+    let context = cleanText(
       line.replace(timeRe, ' ').replace(prayerContext, ' ')
-    ).slice(0, 100);
+    );
+    if (!context) {
+      for (let d = 1; d <= 3 && !context; d++) {
+        const candidate = cleanText(lines[i - d] || '');
+        if (candidate && !candidate.match(timeRe) && !candidate.match(prayerRe)) {
+          context = candidate;
+        }
+      }
+    }
+    context = context.slice(0, 100);
 
     for (const match of matches) {
       const hh = String(match[1]).padStart(2, '0');
