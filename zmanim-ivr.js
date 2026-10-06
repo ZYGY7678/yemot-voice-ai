@@ -272,8 +272,11 @@ export function formatZmanimForPhone(data) {
 export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech}) {
   router.all('/yemot/zmanim', async call => {
     try {
+      console.log('[ZMANIM_IVR] incoming call - playing welcome message');
+
+      const welcome = 'שלום, הגעתם לקו המניין הקרוב אליך של נדרים פלוס. פותח על ידי חייא שיאומי ממתמחים טופ.';
       const recordPath = await call.read(
-        [{type:'text', data:'ברוכים הבאים למערכת זמני התפילות. אנא אמרו עכשיו בקול את שם היישוב או הכתובת שבה אתם גרים, ולאחר מכן המתינו.'}],
+        [{type:'text', data: welcome + ' אנא אמרו עכשיו בקול את שם היישוב או הכתובת שבה אתם גרים, ולאחר מכן המתינו.'}],
         'record',
         {
           min_length: 1,
