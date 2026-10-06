@@ -452,7 +452,8 @@ registerZmanimRoute({
   callerPhone,
   saveLastSearch,
   saveSearch,
-  getSavedSearches
+  getSavedSearches,
+  getLastSearch
 });
 registerLastZmanimRoute(router, {
   callerPhone,
