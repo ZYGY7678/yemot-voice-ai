@@ -443,7 +443,7 @@ async function callHandler(call) {
   }
 }
 
-router.all('/yemot/main-menu', async call => {
+async function mainMenuHandler(call) {
   try {
     const choice=String(await call.read(
       [{
@@ -479,9 +479,11 @@ router.all('/yemot/main-menu', async call => {
     console.error('[MAIN_MENU_ERROR]',error?.stack||error);
     try { return await call.go_to_folder('/'); } catch {}
   }
-});
+}
 
-router.all('/yemot',callHandler);
+router.all('/yemot',mainMenuHandler);
+router.all('/yemot/main-menu',mainMenuHandler);
+
 registerZmanimRoute({
   router,
   downloadRecording,
