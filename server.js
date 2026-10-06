@@ -2,7 +2,7 @@ import express from 'express';
 import { GoogleGenAI, Modality } from '@google/genai';
 import { YemotRouter, ExitError } from 'yemot-router2';
 import YemotApi from 'yemot-api';
-import { registerZmanimRoute, configureZmanimExtension, fetchNedarimZmanim, formatZmanimForPhone } from './zmanim-ivr.js';
+import { registerZmanimRoute, configureZmanimExtension } from './zmanim-ivr.js';
 
 if (process.loadEnvFile) { try { process.loadEnvFile(); } catch {} }
 
@@ -487,28 +487,6 @@ app.get('/',(req,res)=>res.type('html').send("<!doctype html>\n<html lang=\"he\"
 
 process.on('unhandledRejection',e=>{if(!(e instanceof ExitError))console.error(e)});
 process.on('uncaughtException',e=>{if(!(e instanceof ExitError))console.error(e)});
-
-async function runZmanimSelfTest(){
-  const tests=['נתיבות יובל 10','בני ברק רבי עקיבא 50','ירושלים יפו 20'];
-  console.log('[SELFTEST_ZMANIM_BEGIN]',JSON.stringify(tests));
-  for(const location of tests){
-    const started=Date.now();
-    try{
-      const data=await fetchNedarimZmanim(location);
-      const message=formatZmanimForPhone(data);
-      console.log('[SELFTEST_ZMANIM_OK]',JSON.stringify({
-        location,
-        count:data.items?.length||0,
-        items:data.items||[],
-        message,
-        ms:Date.now()-started
-      }));
-    }catch(e){
-      console.error('[SELFTEST_ZMANIM_FAIL]',location,e?.message||e);
-    }
-  }
-  console.log('[SELFTEST_ZMANIM_END]');
-}
 
 const port=process.env.PORT||3000;
 app.listen(port,()=>{ 
