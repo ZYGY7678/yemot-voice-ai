@@ -269,91 +269,60 @@ export function formatZmanimForPhone(data) {
   return cleanText(parts.join(' '));
 }
 
-export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech}) {
+export function registerZmanimRoute(router, {downloadRecording}) {
   router.all('/yemot/zmanim', async call => {
     try {
-      console.log('[ZMANIM_IVR] incoming call - server-side transcription');
+      console.log('[ZMANIM_IVR] incoming call - Yemot Hebrew text keypad');
 
       const welcome = 'שלום, הגעתם לקו המניין הקרוב אליך של נדרים פלוס. פותח על ידי חייא שיאומי ממתמחים טופ.';
 
-      async function recordWithAsterisk(prompt, label, attempt) {
-        const valName = 'zmanim_' + label + '_' + attempt;
-        const spokenPrompt = String(prompt + (attempt > 1 ? ' נסו שוב.' : '')).replace(/[.\\-"'&|]/g, '');
-        const recordOps = [
-          valName,
-          'no',
-          'record',
-          '',
-          '',
-          '*',
-          'no',
-          'no',
-          '1',
-          '30'
-        ].join(',');
-        console.log('[ZMANIM_' + label.toUpperCase() + '_RECORD_START]', valName);
-        call.send('read=' + spokenPrompt + '=' + recordOps);
-        await call.blockRunningUntilNextRequest(90000);
-        const recording = call.values[valName];
-        if (!recording) throw new Error('No ' + label + ' recording received');
-        return recording;
-      }
-
-      async function recordAndConfirm(prompt, label, transcriptionPrompt) {
-        for (let attempt = 1; attempt <= 3; attempt++) {
-          const recording = await recordWithAsterisk(
-            prompt + ' בסיום ההקלטה לחצו כוכבית.',
-            label,
-            attempt
-          );
-
-          console.log('[ZMANIM_' + label.toUpperCase() + '_RECORDING]', String(recording));
-          const text = cleanText(await transcribeSpeech(
-            await downloadRecording(String(recording)),
-            {prompt: transcriptionPrompt}
-          ));
-
-          if (!text || text === 'None') {
-            if (attempt < 3) {
-              await call.id_list_message(
-                [{type:'text',data:'לא הצלחתי להבין את ההקלטה. בואו ננסה שוב.'}],
-                {prependToNextAction:true}
-              );
-              continue;
-            }
-            throw new Error('Empty transcription for ' + label);
+      const readHebrewText = async (prompt, valName) => {
+        const value = await call.read(
+          [{type:'text', data:prompt}],
+          'tap',
+          {
+            val_name: valName,
+            max_digits: '*',
+            min_digits: 1,
+            sec_wait: 15,
+            empty_val: 'None',
+            typing_playback_mode: 'HebrewKeyboard',
+            block_change_keyboard: true,
+            block_asterisk_key: false
           }
+        );
+        return cleanText(value);
+      };
 
-          console.log('[ZMANIM_' + label.toUpperCase() + '_TRANSCRIPTION]', text);
+      const city = await readHebrewText(
+        welcome + ' אנא הקלידו את שם היישוב, ובסיום הקישו סולמית.',
+        'city'
+      );
 
-          const choice = await call.read(
-            [{type:'text',data:'שמעתי: ' + text + '. להמשיך הקישו 1. להקליט מחדש הקישו 2.'}],
-            'tap',
-            {max_digits:1, min_digits:1, digits_allowed:[1,2], sec_wait:10}
-          );
-
-          if (String(choice) === '1') return text;
-
-          await call.id_list_message(
-            [{type:'text',data:'בסדר, מקליטים מחדש.'}],
-            {prependToNextAction:true}
-          );
-        }
-
-        throw new Error('Too many transcription attempts for ' + label);
+      if (!city || city === 'None') {
+        await call.id_list_message(
+          [{type:'text', data:'לא התקבל שם יישוב. אנא נסו שוב.'}],
+          {prependToNextAction:true}
+        );
+        return;
       }
 
-      const city = await recordAndConfirm(
-        welcome + ' אנא אמרו עכשיו את שם היישוב.',
-        'city',
-        'תמלול שם יישוב בישראל'
+      console.log('[ZMANIM_CITY_TYPED]', city);
+
+      const street = await readHebrewText(
+        'תודה. עכשיו הקלידו את שם הרחוב, ובסיום הקישו סולמית.',
+        'street'
       );
 
-      const street = await recordAndConfirm(
-        'תודה. עכשיו אמרו את שם הרחוב.',
-        'street',
-        'תמלול שם רחוב בישראל'
-      );
+      if (!street || street === 'None') {
+        await call.id_list_message(
+          [{type:'text', data:'לא התקבל שם רחוב. אנא נסו שוב.'}],
+          {prependToNextAction:true}
+        );
+        return;
+      }
+
+      console.log('[ZMANIM_STREET_TYPED]', street);
 
       const location = cleanText(city + ' ' + street);
       console.log('[ZMANIM_LOCATION_TYPED]', location);
@@ -369,19 +338,20 @@ export function registerZmanimRoute(router, {downloadRecording, transcribeSpeech
       }));
 
       await call.id_list_message(
-        [{type:'text',data:message}],
+        [{type:'text', data:message}],
         {prependToNextAction:true}
       );
     } catch (error) {
       console.error('[ZMANIM_IVR_ERROR]', error?.stack || error);
       try {
         await call.id_list_message([
-          {type:'text',data:'מצטערים, לא הצלחתי לקבל כרגע את זמני התפילות. נסו שוב בעוד רגע.'}
+          {type:'text', data:'מצטערים, לא הצלחתי לקבל כרגע את זמני התפילות. נסו שוב בעוד רגע.'}
         ], {prependToNextAction:true});
       } catch {}
     }
   });
 }
+
 export async function configureZmanimExtension({token, publicUrl, extension = '1'} = {}) {
   const resolvedToken = String(token || process.env.ZMANIM_YEMOT_TOKEN || '').trim();
   const base = String(publicUrl || process.env.ZMANIM_PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || '').replace(/\/$/, '');
