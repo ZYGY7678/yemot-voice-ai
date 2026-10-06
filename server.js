@@ -499,4 +499,3 @@ app.listen(port,()=>{
   }).catch(e=>console.error('[ZMANIM_CONFIG_FATAL]',e?.message||e));
 });
 
-setTimeout(()=>runZmanimSelfTest().catch(e=>console.error('[SELFTEST_ZMANIM_FATAL]',e?.message||e)),1500);
