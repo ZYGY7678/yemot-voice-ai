@@ -2,7 +2,7 @@ import express from 'express';
 import { GoogleGenAI, Modality } from '@google/genai';
 import { YemotRouter, ExitError } from 'yemot-router2';
 import YemotApi from 'yemot-api';
-import { registerZmanimRoute, configureZmanimExtension, fetchNedarimZmanim, formatZmanimForPhone } from './zmanim-ivr.js';
+import { registerZmanimRoute, configureZmanimExtension } from './zmanim-ivr.js';
 
 if (process.loadEnvFile) { try { process.loadEnvFile(); } catch {} }
 
@@ -476,16 +476,6 @@ app.post('/api/test-ai',async(req,res)=>{
     try{s?.session?.close?.()}catch{}
   }
 });
-app.get('/api/test-zmanim-live',async(req,res)=>{
-  const location=String(req.query?.location||'נתיבות יובל').trim();
-  try{
-    const data=await fetchNedarimZmanim(location);
-    res.json({ok:true,location,count:data.items?.length||0,items:data.items,message:formatZmanimForPhone(data)});
-  }catch(e){
-    console.error('[LIVE_VERIFY_FAIL]',e?.stack||e);
-    res.status(500).json({ok:false,location,error:String(e?.message||e)});
-  }
-});
 app.get('/health',(req,res)=>res.json({
   status:'online',
   service:'ai-phone-line',
@@ -507,18 +497,5 @@ app.listen(port,()=>{
     publicUrl: process.env.ZMANIM_PUBLIC_URL || process.env.PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL,
     extension: process.env.ZMANIM_EXTENSION || '1'
   }).catch(e=>console.error('[ZMANIM_CONFIG_FATAL]',e?.message||e));
-  ;(async()=>{
-    try{
-      const verify=await fetchNedarimZmanim('נתיבות יובל');
-      console.log('[LIVE_VERIFY_OK]',JSON.stringify({
-        location:'נתיבות יובל',
-        count:verify.items?.length||0,
-        items:verify.items,
-        message:formatZmanimForPhone(verify)
-      }));
-    }catch(e){
-      console.error('[LIVE_VERIFY_FAIL]',e?.stack||e);
-    }
-  })();
 });
 
