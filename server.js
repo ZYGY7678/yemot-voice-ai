@@ -461,6 +461,8 @@ async function mainMenuHandler(call) {
       removeInvalidChars:true
     };
 
+    const menuStartedAt = Date.now();
+    console.log('[MAIN_MENU_TTS_START]', JSON.stringify({callId:call?.callId||null}));
     const rawChoice = await call.read(
       [menu],
       'tap',
@@ -476,6 +478,10 @@ async function mainMenuHandler(call) {
         removeInvalidChars:true
       }
     );
+    console.log('[MAIN_MENU_TTS_READY]', JSON.stringify({
+      callId:call?.callId||null,
+      elapsedMs:Date.now()-menuStartedAt
+    }));
 
     const choice = String(rawChoice ?? '').trim();
     console.log('[MAIN_MENU_CHOICE]', JSON.stringify({
