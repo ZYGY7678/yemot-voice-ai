@@ -1144,7 +1144,7 @@ export async function configureZmanimExtension({token,publicUrl}={}) {
 
   const holdMusic=await ensureZmanimHoldMusic(resolvedToken);
   const configs=[
-    {path:'ivr2:/',apiPath:'/yemot/main-menu',music:false},
+    {path:'ivr2:/',apiPath:'/yemot/main-menu',music:true},
     {path:'ivr2:/1',apiPath:'/yemot/zmanim',music:true},
     {path:'ivr2:/2',apiPath:'/yemot/zmanim/saved',music:true},
     {path:'ivr2:/3',apiPath:'/yemot/zmanim/last',music:true}
