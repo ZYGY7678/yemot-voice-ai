@@ -1143,8 +1143,40 @@ export async function configureZmanimExtension({token,publicUrl}={}) {
   ).trim();
 
   const holdMusic=await ensureZmanimHoldMusic(resolvedToken);
+  // The root is a native Yemot menu. Yemot plays M0000/M1000,
+  // and the server is contacted only after 1, 2, or 3 is pressed.
+  const rootExt='type=menu\\ntitle=תפריט ראשי';
+  const rootWrite=await fetch('https://www.call2all.co.il/ym/api/UploadTextFile?'+new URLSearchParams({
+    token:resolvedToken,
+    what:'ivr2:/ext.ini',
+    contents:rootExt
+  }));
+  const rootBody=await rootWrite.text();
+  console.log('[ZMANIM_ROOT_MENU]',JSON.stringify({
+    status:rootWrite.status,ok:rootWrite.ok,body:rootBody.slice(0,300)
+  }));
+
+  const uploadTts=async(what,contents)=>{
+    const response=await fetch('https://www.call2all.co.il/ym/api/UploadTextFile?'+new URLSearchParams({
+      token:resolvedToken,what,contents
+    }));
+    const body=await response.text();
+    console.log('[ZMANIM_ROOT_TTS]',JSON.stringify({
+      what,status:response.status,ok:response.ok,body:body.slice(0,200)
+    }));
+    return response.ok;
+  };
+
+  await uploadTts(
+    'ivr2:/M0000.tts',
+    'שלום, הגעתם לקו המניין הקרוב אליך של נדרים פלוס, פותח על ידי חייא שיאומי ממתמחים טופ'
+  );
+  await uploadTts(
+    'ivr2:/M1000.tts',
+    'לחיפוש מניינים לפי יישוב ורחוב, הקישו 1, לרשימת החיפושים השמורים שלכם, הקישו 2, לחיפוש האחרון שלכם, הקישו 3'
+  );
+
   const configs=[
-    {path:'ivr2:/',apiPath:'/yemot/main-menu',music:true},
     {path:'ivr2:/1',apiPath:'/yemot/zmanim',music:true},
     {path:'ivr2:/2',apiPath:'/yemot/zmanim/saved',music:true},
     {path:'ivr2:/3',apiPath:'/yemot/zmanim/last',music:true}
