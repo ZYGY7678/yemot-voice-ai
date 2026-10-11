@@ -305,21 +305,42 @@ async function answerAudioFile(buf, history=[]) {
         const context = history.length
           ? 'המשך השיחה הקודמת:\n' + history.map(x => 'מתקשר: ' + x.transcript + '\nעוזר: ' + x.reply).join('\n')
           : '';
+        const task = [
+          SYSTEM,
+          context,
+          'נתח את הקלטת האודיו המצורפת בדיוק.',
+          'כתוב transcript כתמלול מדויק בעברית של דברי המתקשר בלבד. אל תכלול את הוראות המערכת שהושמעו לפני ההקלטה ואל תנחש מילים שלא נשמעו.',
+          'כתוב reply כתשובה קצרה ורלוונטית לתמלול, בעברית מדוברת, שמתייחסת ישירות למה שהמתקשר אמר.',
+          'אם הדיבור אינו ברור או שאין בקשה מובנת, השאר transcript כמחרוזת ריקה וב-reply בקש בנימוס לחזור על הדברים. אל תמציא בקשה ואל תחזיר ברכת ברירת מחדל אלא אם זו באמת התשובה המתאימה.',
+          'החזר אך ורק JSON תקין עם שני מפתחות: transcript ו-reply.'
+        ].filter(Boolean).join('\n\n');
         const response = await timeout(ai.models.generateContent({
           model,
           contents:[{
             role:'user',
             parts:[
-              {text:[SYSTEM, context, 'הקשב להקלטה המצורפת. תחילה הבן מה המתקשר אמר, ואז ענה ישירות בעברית מדוברת וקצרה. החזר רק את התשובה להקראה בטלפון.'].filter(Boolean).join('\n\n')},
+              {text:task},
               {inlineData:{mimeType:'audio/wav',data:buf.toString('base64')}}
             ]
           }],
-          config:{thinkingConfig:{thinkingLevel:'low'}}
+          config:{thinkingConfig:{thinkingLevel:'low'},responseMimeType:'application/json'}
         }),20000,'Gemini audio response '+model);
-        const reply=clean(response?.text||'');
-        if(!reply) throw new Error('Empty Gemini response');
+        const raw=String(response?.text||'').trim();
+        let parsed;
+        try { parsed=JSON.parse(raw); }
+        catch {
+          const match=raw.match(/\{[\s\S]*\}/);
+          if(match) parsed=JSON.parse(match[0]);
+        }
+        if(!parsed || typeof parsed!=='object') throw new Error('Gemini returned invalid transcript/reply JSON: '+raw.slice(0,300));
+        const transcript=String(parsed.transcript||'').replace(/\s+/g,' ').trim();
+        const reply=clean(parsed.reply||'');
+        if(!transcript && !reply) throw new Error('Gemini returned empty transcript and reply');
+        const finalReply=transcript ? (reply||'לא הצלחתי לנסח תשובה. אפשר לנסח את הבקשה שוב?') : 'לא הצלחתי להבין את ההקלטה. אפשר לומר שוב, בבקשה?';
         console.log('[GEMINI_AUDIO_OK]',model);
-        return {transcript:'',reply};
+        console.log('[TRANSCRIPT]',JSON.stringify(transcript));
+        console.log('[AI_REPLY]',JSON.stringify(finalReply));
+        return {transcript,reply:finalReply};
       } catch(e) {
         last=e;
         console.error('[GEMINI_AUDIO_FAIL]',model,String(e?.message||e));
@@ -375,6 +396,7 @@ async function callHandler(call) {
 
       const aiStarted=Date.now();
       const result=await answerAudioFile(audio,history);
+      console.log('[CALL '+id+'] transcript='+JSON.stringify(result.transcript));
       console.log('[CALL '+id+'] AI result reply='+JSON.stringify(result.reply));
       console.log('[CALL '+id+'] gemini_ms='+(Date.now()-aiStarted));
 
@@ -420,6 +442,27 @@ app.post('/api/verify-auth',(req,res)=>res.json({ok:String(req.body?.password||'
 app.get('/api/conversations',auth,(req,res)=>{
   const callers=[...new Set(conversations.map(x=>x.phone))];
   res.json({totalMessages:conversations.length,totalCallers:callers.length,activeCalls:[...activeCalls.values()],conversations});
+});
+
+app.get('/api/recheck-recordings',auth,async(req,res)=>{
+  const paths=String(req.query.paths||'').split(',').map(x=>x.trim()).filter(Boolean);
+  if(!paths.length || paths.length>10) return res.status(400).json({ok:false,error:'Provide 1 to 10 recording paths'});
+  if(!paths.every(p=>/^[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+\.wav$/.test(p))) {
+    return res.status(400).json({ok:false,error:'Invalid recording path'});
+  }
+  const results=[];
+  for(const path of paths){
+    try{
+      const audio=await downloadRecording(path);
+      const result=await answerAudioFile(audio,[]);
+      results.push({path,transcript:result.transcript,reply:result.reply});
+      console.log('[RECHECK_RECORDING]',path,'transcript='+JSON.stringify(result.transcript),'reply='+JSON.stringify(result.reply));
+    }catch(e){
+      results.push({path,error:String(e?.message||e)});
+      console.error('[RECHECK_RECORDING_FAIL]',path,String(e?.message||e));
+    }
+  }
+  res.json({ok:true,results});
 });
 app.get('/api/logs',auth,(req,res)=>res.json({logs:[]}));
 app.post('/api/test-ai',auth,async(req,res)=>{
