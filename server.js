@@ -495,4 +495,23 @@ process.on('unhandledRejection',e=>{if(!(e instanceof ExitError))console.error(e
 process.on('uncaughtException',e=>{if(!(e instanceof ExitError))console.error(e)});
 
 const port=process.env.PORT||3000;
-app.listen(port,()=>{ console.log('Server running on port '+port); disableYemotWaitMusic(); });
+app.listen(port,()=>{
+  console.log('Server running on port '+port);
+  disableYemotWaitMusic();
+  const recheckPaths=String(process.env.RECHECK_EXISTING_RECORDINGS||'').split(',').map(x=>x.trim()).filter(Boolean);
+  if(recheckPaths.length>0 && recheckPaths.length<=10 && recheckPaths.every(p=>/^[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+\.wav$/.test(p))){
+    console.log('[RECHECK_EXISTING_RECORDINGS_START]',JSON.stringify(recheckPaths));
+    setTimeout(async()=>{
+      for(const path of recheckPaths){
+        try{
+          const audio=await downloadRecording(path);
+          const result=await answerAudioFile(audio,[]);
+          console.log('[RECHECK_EXISTING_RECORDINGS_RESULT]',JSON.stringify({path,transcript:result.transcript,reply:result.reply}));
+        }catch(e){
+          console.error('[RECHECK_EXISTING_RECORDINGS_FAIL]',JSON.stringify({path,error:String(e?.message||e)}));
+        }
+      }
+      console.log('[RECHECK_EXISTING_RECORDINGS_DONE]');
+    },3000);
+  }
+});
