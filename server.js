@@ -108,6 +108,42 @@ function callerPhone(c) {
   return String(c?.values?.ApiPhone??c?.req?.query?.ApiPhone??c?.req?.body?.ApiPhone??'').trim()||'לא מזוהה';
 }
 
+let silentPromptPathPromise;
+
+async function ensureSilentPromptPath() {
+  if (silentPromptPathPromise) return silentPromptPathPromise;
+  silentPromptPathPromise = (async () => {
+    const token=String(process.env.YEMOT_API_KEY||'').trim();
+    if(!token) throw new Error('YEMOT_API_KEY missing; cannot create silent prompt');
+    const wav=pcmToWav(Buffer.alloc(24000*2),24000,1);
+    const path='ivr2:/1/ai-silence-'+Date.now()+'.wav';
+    const form=new FormData();
+    form.append('file',new Blob([wav],{type:'audio/wav'}),'silence.wav');
+    const upload=await timeout(fetch('https://www.call2all.co.il/ym/api/UploadFile?'+new URLSearchParams({
+      token,path,convertAudio:'0',autoNumbering:'false',tts:'0'
+    }),{method:'POST',body:form}),REQUEST_TIMEOUT_MS,'upload silent prompt');
+    const body=await upload.text();
+    if(!upload.ok) throw new Error('Silent prompt upload HTTP '+upload.status+' '+body);
+    try {
+      const data=JSON.parse(body);
+      if(data?.responseStatus && data.responseStatus!=='OK') throw new Error('Silent prompt upload rejected: '+body);
+    } catch(e) {
+      if(String(e?.message||'').startsWith('Silent prompt upload rejected:')) throw e;
+      // Some Yemot API versions return plain text on success.
+    }
+    const relative=path.replace(/^ivr2:/,'').replace(/\\.wav$/,'');
+    console.log('[SILENT_PROMPT_READY]',relative);
+    return relative;
+  })();
+  try {
+    return await silentPromptPathPromise;
+  } catch(e) {
+    silentPromptPathPromise=null;
+    console.error('[SILENT_PROMPT_FAIL]',String(e?.message||e));
+    throw e;
+  }
+}
+
 function pcmToWav(pcm, sampleRate=24000, channels=1) {
   const header=Buffer.alloc(44);
   header.write('RIFF',0); header.writeUInt32LE(36+pcm.length,4); header.write('WAVE',8);
@@ -398,16 +434,18 @@ async function callHandler(call) {
 
   const history=[];
   try {
+    const silentPromptPath=await ensureSilentPromptPath();
+    console.log('[CALL '+id+'] silent_prompt_ready='+silentPromptPath);
 
     for(let turn=0;turn<30;turn++){
       activeCalls.get(id).lastActivity=Date.now();
 
       const recordStarted=Date.now();
-      // Speak recording instructions only once. Later recordings use an empty text message
-      // because yemot-router2 requires a non-empty messages array.
+      // Speak recording instructions once. Use a real silent audio file on later turns;
+      // empty TTS text can make Yemot report "שגיאה בהקראה".
       const recordPrompt = turn === 0
-        ? [{type:'text',data:'שלום, אני זיגי. דבר אחרי הצליל וסיים בהקשת סולמית. אחרי שאענה, הקש 1 כדי להתחיל הקלטה חדשה.'}]
-        : [{type:'text',data:''}];
+        ? [{type:'text',data:'שלום, אני זיגי. דבר אחרי הצליל וסיים בהקשת סולמית. אחרי שאענה, הקש אחת כדי להתחיל הקלטה חדשה.'}]
+        : [{type:'file',data:silentPromptPath}];
       const recPath=await call.read(
         recordPrompt,
         'record',
@@ -451,7 +489,7 @@ async function callHandler(call) {
       // The previous answer is played first. Then Yemot listens silently for digit 1.
       // Only digit 1 begins another recording; silence/other outcomes end the call.
       const nextAction=await call.read(
-        [{type:'text',data:''}],
+        [{type:'file',data:silentPromptPath}],
         'tap',
         {
           min_digits:1,
