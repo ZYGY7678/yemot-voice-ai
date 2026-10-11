@@ -94,6 +94,23 @@ function wordCount(value) {
   return (String(value||'').trim().match(/\S+/g)||[]).length;
 }
 
+function splitReplyForYemot(text, maxChars=120) {
+  const words=String(text||'').trim().split(/\s+/).filter(Boolean);
+  const chunks=[];
+  let current='';
+  for(const word of words) {
+    const candidate=current ? current+' '+word : word;
+    if(candidate.length>maxChars && current) {
+      chunks.push(current);
+      current=word;
+    } else {
+      current=candidate;
+    }
+  }
+  if(current) chunks.push(current);
+  return chunks.map(data=>({type:'text',data,removeInvalidChars:true}));
+}
+
 function parseGeminiJson(raw) {
   const text=String(raw||'').trim();
   try { return JSON.parse(text); }
@@ -481,12 +498,29 @@ async function callHandler(call) {
 
       activeCalls.get(id).lastActivity=Date.now();
 
-      // Play the answer inside the same read action that listens for DTMF.
-      // This lets Yemot register digit 1 while the answer is being played.
-      let nextAction;
-      do {
-        nextAction = await call.read(
-          [{type:'text',data:result.reply}],
+      // Keep each TTS segment short: Yemot may fail to read one long text prompt.
+      // The first read plays the answer and listens for digit 1.
+      const replyMessages=splitReplyForYemot(result.reply,120);
+      let nextAction=await call.read(
+        replyMessages,
+        'tap',
+        {
+          min_digits:1,
+          max_digits:1,
+          digits_allowed:[1],
+          sec_wait:30,
+          amount_attempts:1,
+          allow_empty:true,
+          empty_val:'None',
+          removeInvalidChars:true
+        }
+      );
+      console.log('[CALL '+id+'] answer_read_action='+JSON.stringify(nextAction));
+      // If the caller did not press 1 during playback, keep the call open silently.
+      // Do not replay the long answer every 30 seconds.
+      while(String(nextAction)!=='1') {
+        nextAction=await call.read(
+          [{type:'file',data:silentPromptPath}],
           'tap',
           {
             min_digits:1,
@@ -495,23 +529,23 @@ async function callHandler(call) {
             sec_wait:30,
             amount_attempts:1,
             allow_empty:true,
-            empty_val:'None',
-            removeInvalidChars:true
+            empty_val:'None'
           }
         );
-        console.log('[CALL '+id+'] next_action='+JSON.stringify(nextAction));
-        if(String(nextAction)!=='1') {
-          console.log('[CALL '+id+'] still_waiting_for_restart_key');
-        }
-      } while(String(nextAction)!=='1');
+        console.log('[CALL '+id+'] silent_wait_action='+JSON.stringify(nextAction));
+      }
       console.log('[CALL '+id+'] restart_key_received');
     }
   } catch(e) {
     if(e instanceof ExitError) throw e;
-    console.error('[CALL '+id+'] ERROR',e?.stack||e);
-    try {
-      call.id_list_message([{type:'text',data:'מצטער הייתה תקלה זמנית נסה שוב'}]);
-    } catch {}
+    if(e?.name==='HangupError') {
+      console.log('[CALL '+id+'] caller_hangup');
+    } else {
+      console.error('[CALL '+id+'] ERROR',e?.stack||e);
+      try {
+        call.id_list_message([{type:'text',data:'מצטער הייתה תקלה זמנית נסה שוב'}],{removeInvalidChars:true});
+      } catch {}
+    }
   } finally {
     activeCalls.delete(id);
     console.log('[CALL '+id+'] ended');
