@@ -534,26 +534,6 @@ app.get('/api/conversations',auth,(req,res)=>{
   res.json({totalMessages:conversations.length,totalCallers:callers.length,activeCalls:[...activeCalls.values()],conversations});
 });
 
-app.get('/api/recheck-recordings',auth,async(req,res)=>{
-  const paths=String(req.query.paths||'').split(',').map(x=>x.trim()).filter(Boolean);
-  if(!paths.length || paths.length>10) return res.status(400).json({ok:false,error:'Provide 1 to 10 recording paths'});
-  if(!paths.every(p=>/^[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+\.wav$/.test(p))) {
-    return res.status(400).json({ok:false,error:'Invalid recording path'});
-  }
-  const results=[];
-  for(const path of paths){
-    try{
-      const audio=await downloadRecording(path);
-      const result=await answerAudioFile(audio,[]);
-      results.push({path,transcript:result.transcript,reply:result.reply});
-      console.log('[RECHECK_RECORDING]',path,'transcript='+JSON.stringify(result.transcript),'reply='+JSON.stringify(result.reply));
-    }catch(e){
-      results.push({path,error:String(e?.message||e)});
-      console.error('[RECHECK_RECORDING_FAIL]',path,String(e?.message||e));
-    }
-  }
-  res.json({ok:true,results});
-});
 app.get('/api/logs',auth,(req,res)=>res.json({logs:[]}));
 app.post('/api/test-ai',auth,async(req,res)=>{
   let s;
@@ -588,20 +568,5 @@ const port=process.env.PORT||3000;
 app.listen(port,()=>{
   console.log('Server running on port '+port);
   disableYemotWaitMusic();
-  const recheckPaths=String(process.env.RECHECK_EXISTING_RECORDINGS||'').split(',').map(x=>x.trim()).filter(Boolean);
-  if(recheckPaths.length>0 && recheckPaths.length<=10 && recheckPaths.every(p=>/^[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+\.wav$/.test(p))){
-    console.log('[RECHECK_EXISTING_RECORDINGS_START]',JSON.stringify(recheckPaths));
-    setTimeout(async()=>{
-      for(const path of recheckPaths){
-        try{
-          const audio=await downloadRecording(path);
-          const result=await answerAudioFile(audio,[]);
-          console.log('[RECHECK_EXISTING_RECORDINGS_RESULT]',JSON.stringify({path,transcript:result.transcript,reply:result.reply}));
-        }catch(e){
-          console.error('[RECHECK_EXISTING_RECORDINGS_FAIL]',JSON.stringify({path,error:String(e?.message||e)}));
-        }
-      }
-      console.log('[RECHECK_EXISTING_RECORDINGS_DONE]');
-    },3000);
-  }
+  ensureSilentPromptPath().catch(e=>console.error('[SILENT_PROMPT_STARTUP_FAIL]',String(e?.message||e)));
 });
