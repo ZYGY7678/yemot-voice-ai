@@ -1,640 +1,333 @@
 import express from 'express';
-import { GoogleGenAI, Modality } from '@google/genai';
+import { GoogleGenAI } from '@google/genai';
 import { YemotRouter, ExitError } from 'yemot-router2';
-import YemotApi from 'yemot-api';
 
 if (process.loadEnvFile) { try { process.loadEnvFile(); } catch {} }
 
 const app = express();
-app.use(express.urlencoded({extended:true}));
+app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
+// ───────────────────────── הגדרות ─────────────────────────
 const apiKeys = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '')
   .split(',').map(x => x.trim()).filter(Boolean);
-
-const LIVE_MODEL = process.env.LIVE_MODEL || 'gemini-3.8-live';
-const AUDIO_MODELS = (process.env.GEMINI_MODELS || 'gemini-flash-lite-latest').split(',').map(x=>x.trim()).filter(Boolean);
+const AUDIO_MODELS = (process.env.GEMINI_MODELS || 'gemini-flash-lite-latest')
+  .split(',').map(x => x.trim()).filter(Boolean);
+const PER_MODEL_TIMEOUT_MS = Number(process.env.PER_MODEL_TIMEOUT_MS || 20000);
 const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 55000);
+const MIN_REPLY_WORDS = process.env.MIN_REPLY_WORDS ? Number(process.env.MIN_REPLY_WORDS) : 50; // 0 = ללא מינימום
+const THINKING_LEVEL = String(process.env.THINKING_LEVEL || '').trim().toUpperCase(); // אופציונלי: MINIMAL/LOW/MEDIUM/HIGH
 const DASHBOARD_PASSWORD = String(process.env.DASHBOARD_PASSWORD || '1234');
+const GREETING = String(process.env.WELCOME_MESSAGE || '').trim() || 'שלום אני זיגי במה אפשר לעזור';
+const MAX_TURNS = 40;      // כמה סבבי שיחה מקסימום בשיחה אחת
+const MAX_HISTORY = 10;    // כמה סבבים אחרונים נשלחים ל-Gemini כהקשר
+const MAX_FAILURES = 3;    // כמה תקלות רצופות לפני ניתוק
+
 const SYSTEM = [
   process.env.AI_SYSTEM_INSTRUCTION || '',
-  'אתה עוזר קולי בקו טלפון בעברית. ענה בעברית מדוברת, ברורה וקצרה.',
-  'ענה ישירות לבקשה האחרונה. אל תמציא מידע. אם לא ברור מה המתקשר אמר, בקש הבהרה קצרה.',
-  'אל תשתמש ב-Markdown. בכל מענה ענה בעברית טבעית ומפורטת, בלפחות 50 מילים. אל תחזור על אותו רעיון רק כדי למלא אורך, אל תמציא עובדות; אם חסר מידע, הסבר מה חסר ובקש הבהרה.'
+  'קוראים לך זיגי. אתה עוזר קולי בקו טלפון ומדבר בעברית מדוברת וברורה.',
+  'ענה ישירות למה שהמתקשר אמר. אל תמציא מידע. אם לא ברור מה נאמר בקש הבהרה קצרה.',
+  'התשובה תוקרא בקול ולכן בלי Markdown בלי רשימות ובלי סימנים מיוחדים. אל תשתמש בנקודות מקפים גרשיים או מרכאות.',
+  MIN_REPLY_WORDS > 0
+    ? `ענה בעברית טבעית ומועילה באורך של לפחות ${MIN_REPLY_WORDS} מילים, בלי לחזור על עצמך ובלי להמציא עובדות. אם חסר מידע הסבר מה חסר ובקש הבהרה.`
+    : ''
 ].filter(Boolean).join('\n\n');
 
-async function disableYemotWaitMusic() {
-  const token=String(process.env.YEMOT_API_KEY||'').trim();
-  if(!token) {
-    console.error('[YEMOT_EXTENSION_1_CONFIG_FAIL] YEMOT_API_KEY missing');
-    return;
-  }
-  try {
-    const qs=new URLSearchParams({
-      token,
-      path:'ivr2:/1',
-      api_link:(process.env.PUBLIC_BASE_URL||'').replace(/\/+$/,'')+'/yemot',
-      api_wait:'yes',
-      api_wait_play:'yes',
-      api_wait_answer_music_on_hold:'no',
-      api_wait_answer_music_on_hold_different:'',
-      api_record_beep:'no',
-      option_record:'--',
-      api_timeout:'60',
-      tts_rate:'2',
-      rate:'2'
-    });
-    const r=await fetch('https://www.call2all.co.il/ym/api/UpdateExtension?'+qs);
-    const body=await r.text();
-    console.log('[YEMOT_EXTENSION_1_CONFIGURED]',r.status,body);
-    if(!r.ok || !body.includes('"responseStatus":"OK"')) {
-      console.error('[YEMOT_EXTENSION_1_CONFIG_FAIL]',body);
-    }
-  } catch(e) {
-    console.error('[YEMOT_EXTENSION_1_CONFIG_FAIL]',e?.message||e);
-  }
-}
-
-const router = YemotRouter({
-  printLog:true,
-  timeout:450000,
-  defaults:{removeInvalidChars:true},
-  uncaughtErrorHandler:e=>console.error('YEMOT:',e)
-});
-
+// ───────────────────────── כלי עזר ─────────────────────────
 const conversations = [];
-
-// Keep the dashboard useful across requests; transcripts are populated from Gemini where available.
-
 const activeCalls = new Map();
 
 function timeout(p, ms, label) {
   let t;
-  const q = new Promise((_,rej)=>{
-    t=setTimeout(()=>{
-      const e=new Error('Timeout: '+label);
-      e.status=408;
+  const q = new Promise((_, rej) => {
+    t = setTimeout(() => {
+      const e = new Error('Timeout: ' + label);
+      e.status = 408;
       rej(e);
-    },ms);
+    }, ms);
   });
-  return Promise.race([p,q]).finally(()=>clearTimeout(t));
+  return Promise.race([p, q]).finally(() => clearTimeout(t));
 }
 
+// ימות לא יכולים להקריא: נקודה, מקף, גרש, גרשיים, & ו-| (לפי התיעוד). גם = ו-# מפרקים את מחרוזת ה-read.
 function clean(t) {
-  return String(t||'')
-    .replace(/[*#_~]/g,' ')
-    .replace(/[\\[\\]()<>]/g,' ')
-    .replace(/[."“”‘’']/g,' ')
-    .replace(/[-–—]/g,' ')
-    .replace(/\\s+/g,' ')
+  return String(t || '')
+    .replace(/[*#_~`]/g, ' ')
+    .replace(/[\[\]{}()<>=&|\\\/]/g, ' ')
+    .replace(/[“”„"‘’']/g, '')
+    .replace(/[-–—]/g, ' ')
+    .replace(/[.:;]/g, ',')
+    .replace(/(\s*,\s*)+/g, ', ')
+    .replace(/\s+/g, ' ')
+    .replace(/^[,\s]+/, '')
     .trim();
 }
 
 function wordCount(value) {
-  return (String(value||'').trim().match(/\S+/g)||[]).length;
+  return (String(value || '').trim().match(/\S+/g) || []).length;
 }
 
-function splitReplyForYemot(text, maxChars=120) {
-  const words=String(text||'').trim().split(/\s+/).filter(Boolean);
-  const chunks=[];
-  let current='';
-  for(const word of words) {
-    const candidate=current ? current+' '+word : word;
-    if(candidate.length>maxChars && current) {
+// הודעות קצרות כדי שימות לא ייכשלו בהקראת טקסט ארוך אחד
+function textMessages(text, maxChars = 120) {
+  const words = clean(text).split(' ').filter(Boolean);
+  const chunks = [];
+  let current = '';
+  for (const word of words) {
+    const candidate = current ? current + ' ' + word : word;
+    if (candidate.length > maxChars && current) {
       chunks.push(current);
-      current=word;
+      current = word;
     } else {
-      current=candidate;
+      current = candidate;
     }
   }
-  if(current) chunks.push(current);
-  return chunks.map(data=>({type:'text',data,removeInvalidChars:true}));
+  if (current) chunks.push(current);
+  if (!chunks.length) chunks.push('סליחה לא הבנתי');
+  return chunks.map(data => ({ type: 'text', data, removeInvalidChars: true }));
 }
 
 function parseGeminiJson(raw) {
-  const text=String(raw||'').trim();
+  const text = String(raw || '').trim();
   try { return JSON.parse(text); }
   catch {
-    const match=text.match(/\{[\s\S]*\}/);
-    if(match) return JSON.parse(match[0]);
-    throw new Error('Gemini returned invalid JSON: '+text.slice(0,300));
+    const match = text.match(/\{[\s\S]*\}/);
+    if (match) return JSON.parse(match[0]);
+    throw new Error('Gemini returned invalid JSON: ' + text.slice(0, 300));
   }
 }
 
 function callerPhone(c) {
-  return String(c?.values?.ApiPhone??c?.req?.query?.ApiPhone??c?.req?.body?.ApiPhone??'').trim()||'לא מזוהה';
+  return String(c?.values?.ApiPhone ?? c?.req?.query?.ApiPhone ?? c?.req?.body?.ApiPhone ?? '').trim() || 'לא מזוהה';
 }
 
-let silentPromptPathPromise;
-
-async function ensureSilentPromptPath() {
-  if (silentPromptPathPromise) return silentPromptPathPromise;
-  silentPromptPathPromise = (async () => {
-    const token=String(process.env.YEMOT_API_KEY||'').trim();
-    if(!token) throw new Error('YEMOT_API_KEY missing; cannot create silent prompt');
-    const wav=pcmToWav(Buffer.alloc(24000*2),24000,1);
-    const path='ivr2:/1/9900000000'+Date.now()+'.wav';
-    const form=new FormData();
-    form.append('file',new Blob([wav],{type:'audio/wav'}),'silence.wav');
-    const upload=await timeout(fetch('https://www.call2all.co.il/ym/api/UploadFile?'+new URLSearchParams({
-      token,path,convertAudio:'0',autoNumbering:'false',tts:'0'
-    }),{method:'POST',body:form}),REQUEST_TIMEOUT_MS,'upload silent prompt');
-    const body=await upload.text();
-    if(!upload.ok) throw new Error('Silent prompt upload HTTP '+upload.status+' '+body);
-    try {
-      const data=JSON.parse(body);
-      if(data?.responseStatus && data.responseStatus!=='OK') throw new Error('Silent prompt upload rejected: '+body);
-    } catch(e) {
-      if(String(e?.message||'').startsWith('Silent prompt upload rejected:')) throw e;
-      // Some Yemot API versions return plain text on success.
-    }
-    const relative=path.replace(/^ivr2:/,'').slice(0, -4);
-    console.log('[SILENT_PROMPT_READY]',relative);
-    return relative;
-  })();
-  try {
-    return await silentPromptPathPromise;
-  } catch(e) {
-    silentPromptPathPromise=null;
-    console.error('[SILENT_PROMPT_FAIL]',String(e?.message||e));
-    throw e;
-  }
+function isBusyError(e) {
+  const status = Number(e?.status || e?.code);
+  const msg = String(e?.message || e);
+  return [408, 429, 500, 503].includes(status) || /overload|unavailable|exhausted|quota|timeout/i.test(msg);
 }
 
-function pcmToWav(pcm, sampleRate=24000, channels=1) {
-  const header=Buffer.alloc(44);
-  header.write('RIFF',0); header.writeUInt32LE(36+pcm.length,4); header.write('WAVE',8);
-  header.write('fmt ',12); header.writeUInt32LE(16,16); header.writeUInt16LE(1,20);
-  header.writeUInt16LE(channels,22); header.writeUInt32LE(sampleRate,24);
-  header.writeUInt32LE(sampleRate*channels*2,28); header.writeUInt16LE(channels*2,32);
-  header.writeUInt16LE(16,34); header.write('data',36); header.writeUInt32LE(pcm.length,40);
-  return Buffer.concat([header,pcm]);
+// ───────────────────────── ימות המשיח: הורדת הקלטה ─────────────────────────
+// טוקן: מפתח API (YEMOT_API_KEY) או "מספר מערכת:סיסמה" (לפי תיעוד ה-API של ימות)
+function yemotToken() {
+  const key = String(process.env.YEMOT_API_KEY || '').trim();
+  if (key) return key;
+  const user = String(process.env.YEMOT_API_USERNAME || '').trim();
+  const pass = String(process.env.YEMOT_API_PASSWORD || '').trim();
+  return user && pass ? `${user}:${pass}` : '';
 }
 
-async function generateOpeningAudio(previousContext='') {
-  const model=process.env.OPENING_TTS_MODEL||'gemini-2.5-flash-preview-tts';
-  let last;
-  for(const apiKey of apiKeys){
-    try{
-      const ai=new GoogleGenAI({apiKey});
-      const prompt='אמור בדיוק את המשפט הבא בעברית טבעית וברורה, ללא תוספות: היי אני צחי במה אני יכול לעזור לך?';
-      const response=await timeout(ai.models.generateContent({
-        model,
-        contents:[{role:'user',parts:[{text:prompt}]}],
-        config:{
-          responseModalities:['AUDIO'],
-          speechConfig:{voiceConfig:{prebuiltVoiceConfig:{voiceName:process.env.OPENING_TTS_VOICE||'Kore'}}}
-        }
-      }),10000,'Gemini opening audio');
-      const part=response?.candidates?.[0]?.content?.parts?.find(p=>p?.inlineData?.data);
-      if(!part) throw new Error('Gemini returned no opening audio');
-      const mime=String(part.inlineData.mimeType||'audio/L16;rate=24000');
-      const rate=Number((mime.match(/rate=(\\d+)/)||[])[1]||24000);
-      const raw=Buffer.from(part.inlineData.data,'base64');
-      const wav=pcmToWav(raw,rate,1);
-      const token=String(process.env.YEMOT_API_KEY||'').trim();
-      const path='ivr2:/1/ai-opening-'+Date.now()+'.wav';
-      const form=new FormData();
-      form.append('file',new Blob([wav],{type:'audio/wav'}),'opening.wav');
-      const upload=await timeout(fetch('https://www.call2all.co.il/ym/api/UploadFile?'+new URLSearchParams({
-        token,path,convertAudio:'0',autoNumbering:'false',tts:'0'
-      }),{method:'POST',body:form}),REQUEST_TIMEOUT_MS,'upload opening audio');
-      const body=await upload.text();
-      if(!upload.ok) throw new Error('UploadFile HTTP '+upload.status+' '+body);
-      console.log('[OPENING_AUDIO_READY]',path);
-      return path.replace(/^ivr2:/,'');
-    }catch(e){
-      last=e;
-      console.error('[OPENING_AUDIO_FAIL]',String(e?.message||e));
-    }
+async function downloadRecording(recPath) {
+  const token = yemotToken();
+  if (!token) throw new Error('חסר YEMOT_API_KEY (או YEMOT_API_USERNAME + YEMOT_API_PASSWORD)');
+  let p = String(recPath);
+  if (!p.startsWith('ivr2:')) p = 'ivr2:' + (p.startsWith('/') ? p : '/' + p);
+  const url = 'https://www.call2all.co.il/ym/api/DownloadFile?' + new URLSearchParams({ token, path: p });
+  const r = await timeout(fetch(url), REQUEST_TIMEOUT_MS, 'download recording');
+  if (!r.ok) throw new Error(`DownloadFile HTTP ${r.status} path=${p}`); // ימות מחזירים 404 כשהקובץ לא קיים
+  const buf = Buffer.from(await r.arrayBuffer());
+  if (buf.length < 44 || buf.toString('ascii', 0, 4) !== 'RIFF') {
+    throw new Error('DownloadFile לא החזיר WAV: ' + buf.toString('utf8', 0, 200));
   }
-  throw last||new Error('Could not generate opening audio');
+  return buf;
 }
 
-
-async function downloadRecording(path) {
-  const p=path.startsWith('ivr2:')?path:'ivr2:'+path;
-  const token=String(process.env.YEMOT_API_KEY||'').trim();
-  if(token){
-    const u='https://www.call2all.co.il/ym/api/DownloadFile?token='+encodeURIComponent(token)+'&path='+encodeURIComponent(p);
-    const r=await timeout(fetch(u),REQUEST_TIMEOUT_MS,'download recording');
-    if(!r.ok) throw new Error('DownloadFile HTTP '+r.status);
-    return Buffer.from(await r.arrayBuffer());
-  }
-  if(process.env.YEMOT_API_USERNAME&&process.env.YEMOT_API_PASSWORD){
-    const api=new YemotApi(process.env.YEMOT_API_USERNAME,process.env.YEMOT_API_PASSWORD);
-    const r=await timeout(api.download_file(p),REQUEST_TIMEOUT_MS,'download recording');
-    return Buffer.isBuffer(r.data)?r.data:Buffer.from(r.data);
-  }
-  throw new Error('YEMOT credentials are missing');
-}
-
-function wavToPcm(buf) {
-  if (!Buffer.isBuffer(buf) || buf.length < 44) throw new Error('Invalid WAV');
-  if (buf.toString('ascii',0,4)!=='RIFF' || buf.toString('ascii',8,12)!=='WAVE') {
-    throw new Error('Recording is not WAV');
-  }
-
-  let pos=12, audioFormat=null, channels=null, sampleRate=null, bits=null, dataStart=null, dataSize=null;
-  while(pos+8<=buf.length){
-    const id=buf.toString('ascii',pos,pos+4);
-    const size=buf.readUInt32LE(pos+4);
-    const body=pos+8;
-    if(id==='fmt ' && size>=16){
-      audioFormat=buf.readUInt16LE(body);
-      channels=buf.readUInt16LE(body+2);
-      sampleRate=buf.readUInt32LE(body+4);
-      bits=buf.readUInt16LE(body+14);
-    } else if(id==='data'){
-      dataStart=body;
-      dataSize=Math.min(size,buf.length-body);
-      break;
-    }
-    pos=body+size+(size%2);
-  }
-  if(audioFormat!==1 || !channels || !sampleRate || bits!==16 || dataStart==null){
-    throw new Error('WAV must contain PCM 16-bit audio');
-  }
-
-  const src=buf.subarray(dataStart,dataStart+dataSize);
-  const frames=src.length/(2*channels);
-  if(!Number.isInteger(frames) || frames<1) throw new Error('WAV contains no PCM frames');
-
-  const mono=Buffer.allocUnsafe(frames*2);
-  for(let i=0;i<frames;i++){
-    let sum=0;
-    for(let ch=0;ch<channels;ch++) sum+=src.readInt16LE((i*channels+ch)*2);
-    mono.writeInt16LE(Math.round(sum/channels),i*2);
-  }
-
-  const targetRate=16000;
-  if(sampleRate===targetRate) return {pcm:mono,sampleRate:targetRate};
-
-  const outFrames=Math.max(1,Math.round(frames*targetRate/sampleRate));
-  const out=Buffer.allocUnsafe(outFrames*2);
-  if(outFrames===1){
-    out.writeInt16LE(mono.readInt16LE(0),0);
-    return {pcm:out,sampleRate:targetRate};
-  }
-
-  const scale=(frames-1)/(outFrames-1);
-  for(let i=0;i<outFrames;i++){
-    const srcPos=i*scale;
-    const left=Math.floor(srcPos);
-    const right=Math.min(left+1,frames-1);
-    const frac=srcPos-left;
-    const a=mono.readInt16LE(left*2);
-    const b=mono.readInt16LE(right*2);
-    out.writeInt16LE(Math.max(-32768,Math.min(32767,Math.round(a+(b-a)*frac))),i*2);
-  }
-  return {pcm:out,sampleRate:targetRate};
-}
-
-async function connectLive() {
-  let last;
-  for (const apiKey of apiKeys) {
-    try {
-      const ai = new GoogleGenAI({apiKey});
-      const queue = [];
-      let wake;
-      const session = await timeout(ai.live.connect({
-        model:LIVE_MODEL,
-        config:{
-          responseModalities:[Modality.AUDIO],
-          inputAudioTranscription:{},
-          outputAudioTranscription:{},
-          systemInstruction:{parts:[{text:SYSTEM}]}
-        },
-        callbacks:{
-          onmessage:message=>{
-            queue.push(message);
-            if(wake){const w=wake;wake=null;w();}
-          },
-          onerror:e=>console.error('[LIVE_ERROR]',e?.message||e),
-          onclose:e=>console.log('[LIVE_CLOSE]',e?.reason||'')
-        }
-      }),15000,'Gemini Live connect');
-      console.log('[GEMINI_LIVE_CONNECTED]',LIVE_MODEL);
-      return {session,queue,getMessage:async()=>{
-        while(!queue.length) await new Promise(resolve=>{wake=resolve});
-        return queue.shift();
-      }};
-    } catch(e) {
-      last=e;
-      console.error('[GEMINI_LIVE_CONNECT_FAIL]',String(e?.message||e));
-    }
-  }
-  throw last || new Error('No Gemini API key available');
-}
-
-async function liveTurn(live, buf) {
-  const {pcm,sampleRate}=wavToPcm(buf);
-  const chunkBytes=Math.max(2048, Math.round(sampleRate*2*0.1));
-
-  // Feed the recording as short realtime chunks, matching Google's Live API guidance.
-  // A single giant chunk can delay/stall turn detection with prerecorded files.
-  for(let offset=0; offset<pcm.length; offset+=chunkBytes){
-    const chunk=pcm.subarray(offset, Math.min(offset+chunkBytes, pcm.length));
-    live.session.sendRealtimeInput({
-      audio:{
-        data:chunk.toString('base64'),
-        mimeType:'audio/pcm;rate='+sampleRate
-      }
-    });
-  }
-  live.session.sendRealtimeInput({audioStreamEnd:true});
-
-  const result=await timeout((async()=>{
-    let inputTranscript='';
-    let outputTranscript='';
-    let seenModelTurn=false;
-    while(true) {
-      const message=await live.getMessage();
-      const sc=message?.serverContent;
-      if(sc?.inputTranscription?.text) inputTranscript+=' '+sc.inputTranscription.text;
-      if(sc?.outputTranscription?.text) outputTranscript+=' '+sc.outputTranscription.text;
-      if(sc?.modelTurn) seenModelTurn=true;
-      if(sc?.turnComplete) {
-        return {transcript:clean(inputTranscript),reply:clean(outputTranscript),seenModelTurn};
-      }
-    }
-  })(),20000,'Gemini 3.8 Live');
-
-  return result;
-}
-
-async function transcribeAudioOnly(ai, model, buf) {
+// ───────────────────────── Gemini ─────────────────────────
+async function askGemini(ai, model, parts) {
+  const config = { responseMimeType: 'application/json' };
+  if (THINKING_LEVEL) config.thinkingConfig = { thinkingLevel: THINKING_LEVEL };
   const response = await timeout(ai.models.generateContent({
     model,
-    contents:[{
-      role:'user',
-      parts:[
-        {text:'תמלל במדויק את הדיבור שבהקלטה המצורפת בעברית. החזר רק JSON תקין במבנה {"transcript":"הטקסט המדויק שנאמר"}. אם אין דיבור ברור, כתוב transcript ריק. אל תענה לשאלה ואל תסכם.'},
-        {inlineData:{mimeType:'audio/wav',data:buf.toString('base64')}}
-      ]
-    }],
-    config:{thinkingConfig:{thinkingLevel:'low'},responseMimeType:'application/json'}
-  }),20000,'Gemini transcript-only '+model);
-  const parsed=parseGeminiJson(response?.text||'');
-  return String(parsed.transcript||'').replace(/\\s+/g,' ').trim();
+    contents: [{ role: 'user', parts }],
+    config
+  }), PER_MODEL_TIMEOUT_MS, 'Gemini ' + model);
+  return parseGeminiJson(response?.text || '');
 }
 
-async function answerAudioFile(buf, history=[]) {
+async function answerAudio(buf, history) {
+  const context = history.length
+    ? 'המשך השיחה עד כה:\n' + history.map(x => `מתקשר: ${x.transcript}\nזיגי: ${x.reply}`).join('\n')
+    : '';
+  const task = [
+    SYSTEM,
+    context,
+    'המצורפת היא הקלטת האודיו של המתקשר. כתוב transcript כתמלול מדויק בעברית של דברי המתקשר בלבד.',
+    'כתוב reply כתשובה טבעית, ישירה ורלוונטית לדברי המתקשר, בעברית מדוברת.',
+    'אם המתקשר רק בירך, השב בנימוס והזמן אותו לומר במה הוא צריך עזרה. אם הדיבור לא ברור בקש ממנו לחזור על הדברים.',
+    'החזר אך ורק JSON תקין עם שני מפתחות: transcript ו-reply.'
+  ].filter(Boolean).join('\n\n');
+  const audioPart = { inlineData: { mimeType: 'audio/wav', data: buf.toString('base64') } };
+
   let last;
   for (const apiKey of apiKeys) {
-    const ai = new GoogleGenAI({apiKey});
+    const ai = new GoogleGenAI({ apiKey });
     for (const model of AUDIO_MODELS) {
       try {
-        const context = history.length
-          ? 'המשך השיחה הקודמת:\n' + history.map(x => 'מתקשר: ' + x.transcript + '\nעוזר: ' + x.reply).join('\n')
-          : '';
-        const task = [
-          SYSTEM,
-          context,
-          'נתח את הקלטת האודיו המצורפת. כתוב transcript כתמלול מדויק בעברית של דברי המתקשר בלבד.',
-          'כתוב reply כתשובה טבעית, ישירה ורלוונטית לתמלול, בעברית מדוברת, בלפחות 50 מילים. התשובה צריכה להסביר את העניין במידה מועילה; אל תמציא פרטים שאינם ידועים ואל תחזור על אותו משפט כדי למלא אורך.',
-          'אם המתקשר רק בירך, השב בנימוס ובהרחבה סבירה והזמן אותו לומר במה הוא זקוק לעזרה. אם הדיבור לא ברור, בקש לחזור על הדברים והסבר בקצרה שלא הצלחת להבין.',
-          'החזר אך ורק JSON תקין עם שני מפתחות: transcript ו-reply.'
-        ].filter(Boolean).join('\n\n');
-        const response = await timeout(ai.models.generateContent({
-          model,
-          contents:[{
-            role:'user',
-            parts:[
-              {text:task},
-              {inlineData:{mimeType:'audio/wav',data:buf.toString('base64')}}
-            ]
-          }],
-          config:{thinkingConfig:{thinkingLevel:'low'},responseMimeType:'application/json'}
-        }),20000,'Gemini audio response '+model);
-        const parsed=parseGeminiJson(response?.text||'');
-        let transcript=String(parsed.transcript||'').replace(/\s+/g,' ').trim();
-        let reply=clean(parsed.reply||'');
-        if(!transcript) {
+        const parsed = await askGemini(ai, model, [{ text: task }, audioPart]);
+        const transcript = String(parsed.transcript || '').replace(/\s+/g, ' ').trim() || 'לא זוהה תמלול ברור';
+        let reply = clean(parsed.reply);
+        if (!reply) throw new Error('Gemini returned empty reply');
+
+        // ניסיון הרחבה אחד בלבד אם התשובה קצרה מהמינימום (כדי לא להאריך את זמן ההמתנה בטלפון)
+        if (MIN_REPLY_WORDS > 0 && wordCount(reply) < MIN_REPLY_WORDS) {
           try {
-            transcript=await transcribeAudioOnly(ai,model,buf);
-            console.log('[TRANSCRIPT_RECHECK]',JSON.stringify({model,transcript}));
-          } catch(e) {
-            console.error('[TRANSCRIPT_RECHECK_FAIL]',model,String(e?.message||e));
+            const more = await askGemini(ai, model, [{
+              text: [
+                SYSTEM,
+                'דברי המתקשר: ' + transcript,
+                'התשובה הנוכחית: ' + reply,
+                `כתוב מחדש תשובה אחת טבעית ורלוונטית באורך של לפחות ${MIN_REPLY_WORDS + 10} מילים. אל תמציא עובדות. החזר JSON בלבד במבנה {"reply":"..."}`
+              ].join('\n\n')
+            }]);
+            const candidate = clean(more.reply);
+            if (wordCount(candidate) > wordCount(reply)) reply = candidate;
+          } catch (e) {
+            console.error('[EXPAND_FAIL]', model, String(e?.message || e));
           }
         }
-        if(!transcript) transcript='לא זוהה תמלול ברור מההקלטה';
-        if(!reply) throw new Error('Gemini returned empty reply');
 
-        // Ask Gemini to expand short answers, and verify the word count before speaking.
-        for(let attempt=1;attempt<=3 && wordCount(reply)<50;attempt++) {
-          const expandPrompt=[
-            SYSTEM,
-            'דברי המתקשר: '+(transcript||'(לא הצלחנו לזהות דיבור ברור)'),
-            'התשובה הנוכחית: '+reply,
-            'כתוב מחדש תשובה אחת, טבעית ורלוונטית, באורך של לפחות 60 מילים. אל תמציא עובדות. אם חסרים פרטים, הסבר זאת ובקש הבהרה. החזר JSON בלבד במבנה {"reply":"..."}'
-          ].join('\n\n');
-          const expanded=await timeout(ai.models.generateContent({
-            model,
-            contents:[{role:'user',parts:[{text:expandPrompt}]}],
-            config:{thinkingConfig:{thinkingLevel:'low'},responseMimeType:'application/json'}
-          }),20000,'Gemini expand reply '+model);
-          const expandedData=parseGeminiJson(expanded?.text||'');
-          const candidate=clean(expandedData?.reply||'');
-          if(wordCount(candidate)>wordCount(reply)) reply=candidate;
-          console.log('[GEMINI_REPLY_LENGTH_CHECK]',JSON.stringify({attempt,words:wordCount(reply),required:50}));
-        }
-
-        if(wordCount(reply)<50) {
-          const clarification=' כדי שאוכל לעזור לך בצורה מדויקת, חשוב לי לוודא שהבנתי את הבקשה ולא להשלים פרטים שלא נאמרו. אם תוסיף מעט הקשר, תציין מה בדיוק אתה רוצה לדעת ותספר אם יש תנאי או מגבלה שחשוב לקחת בחשבון, אוכל להתאים את ההסבר לצורך שלך. איני רוצה להציג ניחוש כעובדה או לתת תשובה שעלולה להטעות. אם משהו בתשובה אינו מתאים למה שהתכוונת, ספר לי ואדייק אותה.';
-          reply=(reply+' '+clarification).trim();
-        }
-        if(wordCount(reply)<50) throw new Error('Could not enforce minimum reply length of 50 words');
-
-        console.log('[GEMINI_AUDIO_OK]',model);
-        console.log('[TRANSCRIPT]',JSON.stringify(transcript));
-        console.log('[AI_REPLY_WORD_COUNT]',wordCount(reply));
-        console.log('[AI_REPLY]',JSON.stringify(reply));
-        return {transcript,reply};
-      } catch(e) {
-        last=e;
-        console.error('[GEMINI_AUDIO_FAIL]',model,String(e?.message||e));
+        console.log('[GEMINI_OK]', model, 'words=' + wordCount(reply));
+        return { transcript, reply };
+      } catch (e) {
+        last = e;
+        console.error('[GEMINI_FAIL]', model, String(e?.message || e));
       }
     }
   }
-  throw last || new Error('No Gemini API key available');
+  throw last || new Error('לא הוגדר מפתח Gemini (GEMINI_API_KEYS)');
 }
 
-async function answerAudioLive(live, buf) {
-  const out=await liveTurn(live,buf);
-  console.log('[TRANSCRIPT]',JSON.stringify(out.transcript));
-  console.log('[AI_REPLY]',JSON.stringify(out.reply));
-  if(!out.reply) throw new Error('Empty Live response');
-  return out;
+// ───────────────────────── שיחה ─────────────────────────
+const router = YemotRouter({
+  printLog: true,
+  timeout: 450000,
+  defaults: { removeInvalidChars: true },
+  uncaughtErrorHandler: e => console.error('YEMOT:', e)
+});
+
+function sayAndHangup(call, text) {
+  // מקשר הודעה + ניתוק בתשובה אחת (prependToNextAction לפי התיעוד של yemot-router2)
+  try {
+    call.id_list_message(textMessages(text), { prependToNextAction: true, removeInvalidChars: true });
+  } catch (e) {
+    if (!(e instanceof ExitError)) throw e;
+  }
+  call.hangup(); // זורק ExitError - זה תקין
 }
 
 async function callHandler(call) {
-  const p=callerPhone(call);
-  const id=String(call?.callId||call?.values?.ApiCallId||Date.now()+'-'+p);
-  activeCalls.set(id,{phone:p,callId:id,lastActivity:Date.now()});
-  console.log('[CALL '+id+'] started phone='+p);
+  const phone = callerPhone(call);
+  const id = String(call?.callId || call?.values?.ApiCallId || Date.now() + '-' + phone);
+  activeCalls.set(id, { phone, callId: id, lastActivity: Date.now() });
+  console.log(`[CALL ${id}] started phone=${phone}`);
 
-  const history=[];
+  const history = [];
+  let prompt = textMessages(GREETING); // ההודעה הראשונה: "שלום אני זיגי במה אפשר לעזור"
+  let failures = 0;
+
   try {
-    const silentPromptPath=await ensureSilentPromptPath();
-    console.log('[CALL '+id+'] silent_prompt_ready='+silentPromptPath);
+    for (let turn = 0; turn < MAX_TURNS; turn++) {
+      const state = activeCalls.get(id);
+      if (state) state.lastActivity = Date.now();
 
-    for(let turn=0;turn<30;turn++){
-      activeCalls.get(id).lastActivity=Date.now();
-
-      const recordStarted=Date.now();
-      // Speak recording instructions once. Use a real silent audio file on later turns;
-      // empty TTS text can make Yemot report "שגיאה בהקראה".
-      const recordPrompt = turn === 0
-        ? [{type:'text',data:'שלום, אני זיגי. דבר אחרי הצליל וסיים בהקשת סולמית. אחרי שאענה, הקש אחת כדי להתחיל הקלטה חדשה.'}]
-        : [{type:'file',data:silentPromptPath}];
-      const recPath=await call.read(
-        recordPrompt,
-        'record',
-        {
-          min_length:1,
-          no_confirm_menu:true,
-          save_on_hangup:false
-        }
-      );
-
-      if(!recPath) break;
-
-      console.log('[CALL '+id+'] recording='+recPath+' record_ms='+(Date.now()-recordStarted));
-
-      const downloadStarted=Date.now();
-      const audio=await downloadRecording(String(recPath));
-      console.log('[CALL '+id+'] download_ms='+(Date.now()-downloadStarted));
-
-      const aiStarted=Date.now();
-      const result=await answerAudioFile(audio,history);
-      console.log('[CALL '+id+'] transcript='+JSON.stringify(result.transcript));
-      console.log('[CALL '+id+'] AI result reply='+JSON.stringify(result.reply));
-      console.log('[CALL '+id+'] gemini_ms='+(Date.now()-aiStarted));
-
-      history.push({transcript:result.transcript,reply:result.reply});
-      conversations.push({
-        phone:p,
-        callId:id,
-        transcript:result.transcript,
-        reply:result.reply,
-        at:new Date().toISOString()
+      // משמיע את ה-prompt (ברכה / התשובה הקודמת) ואז מקליט. הקשת סולמית מסיימת את ההקלטה מיד (no_confirm_menu)
+      const recPath = await call.read(prompt, 'record', {
+        min_length: 1,
+        no_confirm_menu: true,
+        save_on_hangup: false,
+        removeInvalidChars: true
       });
+      if (!recPath) { console.log(`[CALL ${id}] no recording, ending`); break; }
 
-      activeCalls.get(id).lastActivity=Date.now();
-
-      // Keep each TTS segment short: Yemot may fail to read one long text prompt.
-      // The first read plays the answer and listens for digit 1.
-      const replyMessages=splitReplyForYemot(result.reply,120);
-      let nextAction=await call.read(
-        replyMessages,
-        'tap',
-        {
-          min_digits:1,
-          max_digits:1,
-          digits_allowed:[1],
-          sec_wait:30,
-          amount_attempts:1,
-          allow_empty:true,
-          empty_val:'None',
-          removeInvalidChars:true
-        }
-      );
-      console.log('[CALL '+id+'] answer_read_action='+JSON.stringify(nextAction));
-      // If the caller did not press 1 during playback, keep the call open silently.
-      // Do not replay the long answer every 30 seconds.
-      let emptyWaits=0;
-      while(String(nextAction)!=='1') {
-        nextAction=await call.read(
-          [{type:'file',data:silentPromptPath}],
-          'tap',
-          {
-            min_digits:1,
-            max_digits:1,
-            digits_allowed:[1],
-            sec_wait:30,
-            amount_attempts:1,
-            allow_empty:true,
-            empty_val:'None'
-          }
-        );
-        console.log('[CALL '+id+'] silent_wait_action='+JSON.stringify(nextAction));
-        if(String(nextAction)!=='1') {
-          emptyWaits++;
-          // Prevent a tight loop if Yemot immediately returns None after a caller hangup.
-          await new Promise(resolve=>setTimeout(resolve,1000));
-          if(emptyWaits>=3) {
-            console.log('[CALL '+id+'] no_digit_after_answer; returning to recording');
-            break;
-          }
-        }
-      }
-      console.log('[CALL '+id+'] restart_key_received');
-    }
-  } catch(e) {
-    if(e instanceof ExitError) throw e;
-    if(e?.name==='HangupError') {
-      console.log('[CALL '+id+'] caller_hangup');
-    } else {
-      console.error('[CALL '+id+'] ERROR',e?.stack||e);
       try {
-        call.id_list_message([{type:'text',data:'מצטער הייתה תקלה זמנית נסה שוב'}],{removeInvalidChars:true});
-      } catch {}
+        const t0 = Date.now();
+        const audio = await downloadRecording(recPath);
+        const t1 = Date.now();
+        const result = await answerAudio(audio, history);
+        console.log(`[CALL ${id}] rec=${recPath} download_ms=${t1 - t0} gemini_ms=${Date.now() - t1}`);
+        console.log(`[CALL ${id}] transcript=${JSON.stringify(result.transcript)}`);
+        console.log(`[CALL ${id}] reply=${JSON.stringify(result.reply)}`);
+
+        failures = 0;
+        history.push(result);
+        if (history.length > MAX_HISTORY) history.shift();
+        conversations.push({ phone, callId: id, transcript: result.transcript, reply: result.reply, at: new Date().toISOString() });
+        if (conversations.length > 200) conversations.shift();
+
+        prompt = textMessages(result.reply); // התשובה מושמעת, ומיד אחריה ההקלטה הבאה
+      } catch (e) {
+        failures++;
+        console.error(`[CALL ${id}] turn_failed (${failures}/${MAX_FAILURES}):`, e?.stack || e);
+        if (failures >= MAX_FAILURES) sayAndHangup(call, 'מצטער יש תקלה כרגע נסה שוב מאוחר יותר');
+        prompt = textMessages(isBusyError(e)
+          ? 'מצטערים אני עמוס כרגע נסה שוב עוד מעט'
+          : 'מצטער הייתה תקלה נסה לדבר שוב');
+      }
+    }
+    sayAndHangup(call, 'תודה ולהתראות');
+  } catch (e) {
+    if (e instanceof ExitError) throw e;
+    if (e?.name === 'HangupError') {
+      console.log(`[CALL ${id}] caller_hangup`);
+    } else if (e?.name === 'TimeoutError') {
+      console.log(`[CALL ${id}] caller_timeout`);
+    } else {
+      console.error(`[CALL ${id}] ERROR`, e?.stack || e);
+      try {
+        call.id_list_message(textMessages('מצטער הייתה תקלה זמנית נסה שוב'), { removeInvalidChars: true });
+      } catch (e2) {
+        if (e2 instanceof ExitError) throw e2;
+      }
     }
   } finally {
     activeCalls.delete(id);
-    console.log('[CALL '+id+'] ended');
+    console.log(`[CALL ${id}] ended`);
   }
 }
 
-router.all('/yemot',callHandler);
-app.use('/',router);
+router.all('/yemot', callHandler);
+app.use('/', router);
 
-function auth(req,res,next){
-  if((req.headers['x-dashboard-key']||req.query.key)!==DASHBOARD_PASSWORD)
-    return res.status(401).json({ok:false});
+// ───────────────────────── לוח בקרה ובדיקות ─────────────────────────
+function auth(req, res, next) {
+  if ((req.headers['x-dashboard-key'] || req.query.key) !== DASHBOARD_PASSWORD)
+    return res.status(401).json({ ok: false });
   next();
 }
 
-app.post('/api/verify-auth',(req,res)=>res.json({ok:String(req.body?.password||'')===DASHBOARD_PASSWORD}));
-app.get('/api/conversations',auth,(req,res)=>{
-  const callers=[...new Set(conversations.map(x=>x.phone))];
-  res.json({totalMessages:conversations.length,totalCallers:callers.length,activeCalls:[...activeCalls.values()],conversations});
+app.post('/api/verify-auth', (req, res) => res.json({ ok: String(req.body?.password || '') === DASHBOARD_PASSWORD }));
+app.get('/api/conversations', auth, (req, res) => {
+  const callers = [...new Set(conversations.map(x => x.phone))];
+  res.json({ totalMessages: conversations.length, totalCallers: callers.length, activeCalls: [...activeCalls.values()], conversations });
 });
-
-app.get('/api/logs',auth,(req,res)=>res.json({logs:[]}));
-app.post('/api/test-ai',auth,async(req,res)=>{
-  let s;
-  try{
-    s=await connectLive();
-    s.session.sendClientContent({
-      turns:{role:'user',parts:[{text:String(req.body?.prompt||'שלום, בדוק תקינות')}]},
-      turnComplete:true
-    });
-    res.json({ok:true,response:'Gemini 3.8 Live connection OK'});
-  }catch(e){
-    res.status(500).json({ok:false,error:e.message});
-  }finally{
-    try{s?.session?.close?.()}catch{}
+app.get('/api/logs', auth, (req, res) => res.json({ logs: [] }));
+app.post('/api/test-ai', auth, async (req, res) => {
+  try {
+    if (!apiKeys.length) throw new Error('GEMINI_API_KEYS לא מוגדר');
+    const ai = new GoogleGenAI({ apiKey: apiKeys[0] });
+    const r = await timeout(ai.models.generateContent({
+      model: AUDIO_MODELS[0],
+      contents: String(req.body?.prompt || 'אמור שלום בעברית במשפט אחד')
+    }), PER_MODEL_TIMEOUT_MS, 'test-ai');
+    res.json({ ok: true, model: AUDIO_MODELS[0], response: r?.text || '' });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
   }
 });
 app.get('/dashboard',(req,res)=>res.type('html').send(`<!doctype html><html lang="he" dir="rtl"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>לוח שיחות</title><style>body{font-family:Arial;background:#0b1220;color:#fff;max-width:1000px;margin:25px auto;padding:15px}.card{background:#111c30;padding:18px;border-radius:14px;margin:12px 0}input,button{padding:12px;margin:5px;border-radius:8px;border:0}button{cursor:pointer}.msg{border-top:1px solid #334;padding:12px 0}.muted{color:#9fb0c8}</style><div class="card"><h1>לוח השיחות</h1><div id="login"><p>הזן סיסמת לוח הבקרה:</p><input id="pw" type="password"><button onclick="load()">כניסה</button></div><div id="app" hidden><p id="stats"></p><div id="messages"></div></div></div><script>async function load(){const key=document.getElementById('pw').value;const r=await fetch('/api/conversations',{headers:{'x-dashboard-key':key}});if(!r.ok){alert('סיסמה שגויה');return}const d=await r.json();document.getElementById('login').hidden=true;document.getElementById('app').hidden=false;document.getElementById('stats').textContent='הודעות: '+d.totalMessages+' | מתקשרים: '+d.totalCallers+' | שיחות פעילות: '+d.activeCalls.length;document.getElementById('messages').innerHTML=d.conversations.slice().reverse().map(x=>'<div class="msg"><b>מתקשר: '+esc(x.phone)+'</b><div>'+esc(x.transcript||'(לא זוהה תמלול)')+'</div><div><b>AI:</b> '+esc(x.reply)+'</div><div class="muted">'+esc(x.at)+'</div></div>').join('')||'<p>עדיין אין שיחות.</p>'}function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}</script></html>`));
-
-app.get('/health',(req,res)=>res.json({
-  status:'online',
-  service:'ai-phone-line',
-  model:LIVE_MODEL,
-  geminiConfigured:apiKeys.length>0,
-  yemotConfigured:Boolean(process.env.YEMOT_API_KEY)
+app.get('/health', (req, res) => res.json({
+  status: 'online',
+  service: 'ai-phone-line',
+  models: AUDIO_MODELS,
+  geminiConfigured: apiKeys.length > 0,
+  yemotConfigured: Boolean(yemotToken())
 }));
-app.get('/',(req,res)=>res.type('html').send('<!doctype html><html lang="he" dir="rtl"><meta charset="utf-8"><title>AI Phone Line</title><style>body{font-family:Arial;background:#0b1220;color:#fff;max-width:900px;margin:40px auto;padding:20px}.card{background:#111c30;padding:20px;border-radius:14px;margin:12px 0}input,button{padding:10px;margin:5px}</style><div class="card"><h1>קו טלפון אישי עם בינה מלאכותית</h1><p>Gemini 3.8 Live + ימות המשיח</p><p><a href="/health" style="color:#6cf">בדיקת שרת</a></p></div></html>'));
+app.get('/',(req,res)=>res.type('html').send('<!doctype html><html lang="he" dir="rtl"><meta charset="utf-8"><title>AI Phone Line</title><style>body{font-family:Arial;background:#0b1220;color:#fff;max-width:900px;margin:40px auto;padding:20px}.card{background:#111c30;padding:20px;border-radius:14px;margin:12px 0}input,button{padding:10px;margin:5px}</style><div class="card"><h1>קו טלפון אישי עם בינה מלאכותית</h1><p>Gemini + ימות המשיח</p><p><a href="/health" style="color:#6cf">בדיקת שרת</a></p></div></html>'));
 
-process.on('unhandledRejection',e=>{if(!(e instanceof ExitError))console.error(e)});
-process.on('uncaughtException',e=>{if(!(e instanceof ExitError))console.error(e)});
+process.on('unhandledRejection', e => { if (!(e instanceof ExitError)) console.error(e); });
+process.on('uncaughtException', e => { if (!(e instanceof ExitError)) console.error(e); });
 
-const port=process.env.PORT||3000;
-app.listen(port,()=>{
-  console.log('Server running on port '+port);
-  disableYemotWaitMusic();
-  ensureSilentPromptPath().catch(e=>console.error('[SILENT_PROMPT_STARTUP_FAIL]',String(e?.message||e)));
+const port = process.env.PORT || 3000;
+app.listen(port, () => {
+  console.log('Server running on port ' + port);
+  console.log('Gemini keys=' + apiKeys.length + ' models=' + AUDIO_MODELS.join(',') + ' yemot_token=' + Boolean(yemotToken()));
 });
