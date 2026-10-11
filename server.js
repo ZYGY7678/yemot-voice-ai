@@ -345,30 +345,21 @@ async function callHandler(call) {
 
   const history=[];
   try {
-    const SILENT_RECORD_PROMPT=[]; // ללא הודעה קולית; סיום ההקלטה באמצעות #
 
     for(let turn=0;turn<30;turn++){
       activeCalls.get(id).lastActivity=Date.now();
 
-      if(turn===0){
-        try{
-          const openingPath=await generateOpeningAudio();
-          await call.id_list_message(
-            [{type:'file',data:openingPath}],
-            {prependToNextAction:true}
-          );
-        }catch(e){
-          console.error('[OPENING_AUDIO_FALLBACK]',String(e?.message||e));
-          await call.id_list_message(
-            [{type:'text',data:'מה קורה גבר, אני איתך'}],
-            {prependToNextAction:true}
-          );
-        }
-      }
-
       const recordStarted=Date.now();
-      // אין תשובת פתיחה מקומית — ההקלטה נשלחת ישירות ל-Gemini.
-      const recordPrompt = SILENT_RECORD_PROMPT;
+      // Play the greeting and recording instructions as Yemot text prompts before recording.
+      // This avoids uploaded opening-audio filenames that Yemot rejects, and prevents an empty prompt.
+      const recordPrompt = turn === 0
+        ? [
+            {type:'text',data:'היי, אני זיגי, מה איתך אחי!'},
+            {type:'text',data:'אני מקליט עכשיו. דבר איתי, ובסיום דבריך לחץ על סולמית.'}
+          ]
+        : [
+            {type:'text',data:'אני מקליט עכשיו. דבר איתי, ובסיום דבריך לחץ על סולמית.'}
+          ];
       const recPath=await call.read(
         recordPrompt,
         'record',
