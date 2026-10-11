@@ -39,7 +39,7 @@ async function disableYemotWaitMusic() {
       api_wait_answer_music_on_hold:'no',
       api_wait_answer_music_on_hold_different:'',
       api_record_beep:'no',
-      option_record:'3-1-30',
+      option_record:'-1-30',
       api_timeout:'60',
       tts_rate:'2',
       rate:'2'
