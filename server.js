@@ -131,7 +131,7 @@ async function ensureSilentPromptPath() {
       if(String(e?.message||'').startsWith('Silent prompt upload rejected:')) throw e;
       // Some Yemot API versions return plain text on success.
     }
-    const relative=path.replace(/^ivr2:/,'').replace(/\\.wav$/,'');
+    const relative=path.replace(/^ivr2:/,'').slice(0, -4);
     console.log('[SILENT_PROMPT_READY]',relative);
     return relative;
   })();
