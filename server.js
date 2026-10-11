@@ -116,7 +116,7 @@ async function ensureSilentPromptPath() {
     const token=String(process.env.YEMOT_API_KEY||'').trim();
     if(!token) throw new Error('YEMOT_API_KEY missing; cannot create silent prompt');
     const wav=pcmToWav(Buffer.alloc(24000*2),24000,1);
-    const path='ivr2:/1/ai-silence-'+Date.now()+'.wav';
+    const path='ivr2:/1/9900000000'+Date.now()+'.wav';
     const form=new FormData();
     form.append('file',new Blob([wav],{type:'audio/wav'}),'silence.wav');
     const upload=await timeout(fetch('https://www.call2all.co.il/ym/api/UploadFile?'+new URLSearchParams({
