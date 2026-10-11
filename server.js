@@ -20,7 +20,7 @@ const SYSTEM = [
   process.env.AI_SYSTEM_INSTRUCTION || '',
   'אתה עוזר קולי בקו טלפון בעברית. ענה בעברית מדוברת, ברורה וקצרה.',
   'ענה ישירות לבקשה האחרונה. אל תמציא מידע. אם לא ברור מה המתקשר אמר, בקש הבהרה קצרה.',
-  'אל תשתמש ב-Markdown. שמור על תשובות קצרות ומתאימות להקראה בטלפון.'
+  'אל תשתמש ב-Markdown. בכל מענה ענה בעברית טבעית ומפורטת, בלפחות 50 מילים. אל תחזור על אותו רעיון רק כדי למלא אורך, אל תמציא עובדות; אם חסר מידע, הסבר מה חסר ובקש הבהרה.'
 ].filter(Boolean).join('\n\n');
 
 async function disableYemotWaitMusic() {
@@ -88,6 +88,20 @@ function clean(t) {
     .replace(/[-–—]/g,' ')
     .replace(/\\s+/g,' ')
     .trim();
+}
+
+function wordCount(value) {
+  return (String(value||'').trim().match(/\S+/g)||[]).length;
+}
+
+function parseGeminiJson(raw) {
+  const text=String(raw||'').trim();
+  try { return JSON.parse(text); }
+  catch {
+    const match=text.match(/\{[\s\S]*\}/);
+    if(match) return JSON.parse(match[0]);
+    throw new Error('Gemini returned invalid JSON: '+text.slice(0,300));
+  }
 }
 
 function callerPhone(c) {
@@ -308,10 +322,9 @@ async function answerAudioFile(buf, history=[]) {
         const task = [
           SYSTEM,
           context,
-          'נתח את הקלטת האודיו המצורפת בדיוק.',
-          'כתוב transcript כתמלול מדויק בעברית של דברי המתקשר בלבד. אל תכלול את הוראות המערכת שהושמעו לפני ההקלטה ואל תנחש מילים שלא נשמעו.',
-          'כתוב reply כתשובה קצרה ורלוונטית לתמלול, בעברית מדוברת, שמתייחסת ישירות למה שהמתקשר אמר.',
-          'אם הדיבור אינו ברור או שאין בקשה מובנת, השאר transcript כמחרוזת ריקה וב-reply בקש בנימוס לחזור על הדברים. אל תמציא בקשה ואל תחזיר ברכת ברירת מחדל אלא אם זו באמת התשובה המתאימה.',
+          'נתח את הקלטת האודיו המצורפת. כתוב transcript כתמלול מדויק בעברית של דברי המתקשר בלבד.',
+          'כתוב reply כתשובה טבעית, ישירה ורלוונטית לתמלול, בעברית מדוברת, בלפחות 50 מילים. התשובה צריכה להסביר את העניין במידה מועילה; אל תמציא פרטים שאינם ידועים ואל תחזור על אותו משפט כדי למלא אורך.',
+          'אם המתקשר רק בירך, השב בנימוס ובהרחבה סבירה והזמן אותו לומר במה הוא זקוק לעזרה. אם הדיבור לא ברור, בקש לחזור על הדברים והסבר בקצרה שלא הצלחת להבין.',
           'החזר אך ורק JSON תקין עם שני מפתחות: transcript ו-reply.'
         ].filter(Boolean).join('\n\n');
         const response = await timeout(ai.models.generateContent({
@@ -325,22 +338,41 @@ async function answerAudioFile(buf, history=[]) {
           }],
           config:{thinkingConfig:{thinkingLevel:'low'},responseMimeType:'application/json'}
         }),20000,'Gemini audio response '+model);
-        const raw=String(response?.text||'').trim();
-        let parsed;
-        try { parsed=JSON.parse(raw); }
-        catch {
-          const match=raw.match(/\{[\s\S]*\}/);
-          if(match) parsed=JSON.parse(match[0]);
-        }
-        if(!parsed || typeof parsed!=='object') throw new Error('Gemini returned invalid transcript/reply JSON: '+raw.slice(0,300));
+        const parsed=parseGeminiJson(response?.text||'');
         const transcript=String(parsed.transcript||'').replace(/\s+/g,' ').trim();
-        const reply=clean(parsed.reply||'');
+        let reply=clean(parsed.reply||'');
         if(!transcript && !reply) throw new Error('Gemini returned empty transcript and reply');
-        const finalReply=transcript ? (reply||'לא הצלחתי לנסח תשובה. אפשר לנסח את הבקשה שוב?') : 'לא הצלחתי להבין את ההקלטה. אפשר לומר שוב, בבקשה?';
+
+        // Ask Gemini to expand short answers, and verify the word count before speaking.
+        for(let attempt=1;attempt<=3 && wordCount(reply)<50;attempt++) {
+          const expandPrompt=[
+            SYSTEM,
+            'דברי המתקשר: '+(transcript||'(לא הצלחנו לזהות דיבור ברור)'),
+            'התשובה הנוכחית: '+reply,
+            'כתוב מחדש תשובה אחת, טבעית ורלוונטית, באורך של לפחות 60 מילים. אל תמציא עובדות. אם חסרים פרטים, הסבר זאת ובקש הבהרה. החזר JSON בלבד במבנה {"reply":"..."}'
+          ].join('\n\n');
+          const expanded=await timeout(ai.models.generateContent({
+            model,
+            contents:[{role:'user',parts:[{text:expandPrompt}]}],
+            config:{thinkingConfig:{thinkingLevel:'low'},responseMimeType:'application/json'}
+          }),20000,'Gemini expand reply '+model);
+          const expandedData=parseGeminiJson(expanded?.text||'');
+          const candidate=clean(expandedData?.reply||'');
+          if(wordCount(candidate)>wordCount(reply)) reply=candidate;
+          console.log('[GEMINI_REPLY_LENGTH_CHECK]',JSON.stringify({attempt,words:wordCount(reply),required:50}));
+        }
+
+        if(wordCount(reply)<50) {
+          const clarification=' כדי שאוכל לעזור לך בצורה מדויקת, חשוב לי לוודא שהבנתי את הבקשה ולא להשלים פרטים שלא נאמרו. אם תוסיף מעט הקשר, תציין מה בדיוק אתה רוצה לדעת ותספר אם יש תנאי או מגבלה שחשוב לקחת בחשבון, אוכל להתאים את ההסבר לצורך שלך. איני רוצה להציג ניחוש כעובדה או לתת תשובה שעלולה להטעות. אם משהו בתשובה אינו מתאים למה שהתכוונת, ספר לי ואדייק אותה.';
+          reply=(reply+' '+clarification).trim();
+        }
+        if(wordCount(reply)<50) throw new Error('Could not enforce minimum reply length of 50 words');
+
         console.log('[GEMINI_AUDIO_OK]',model);
         console.log('[TRANSCRIPT]',JSON.stringify(transcript));
-        console.log('[AI_REPLY]',JSON.stringify(finalReply));
-        return {transcript,reply:finalReply};
+        console.log('[AI_REPLY_WORD_COUNT]',wordCount(reply));
+        console.log('[AI_REPLY]',JSON.stringify(reply));
+        return {transcript,reply};
       } catch(e) {
         last=e;
         console.error('[GEMINI_AUDIO_FAIL]',model,String(e?.message||e));
@@ -371,11 +403,11 @@ async function callHandler(call) {
       activeCalls.get(id).lastActivity=Date.now();
 
       const recordStarted=Date.now();
-      // Yemot TTS plays the greeting on the first turn and its recording instruction on every turn.
-      // Keep a non-empty prompt array: yemot-router2 rejects empty messages.
+      // Speak recording instructions only once. Later recordings use an empty text message
+      // because yemot-router2 requires a non-empty messages array.
       const recordPrompt = turn === 0
-        ? [{type:'text',data:'היי, אני זיגי, מה איתך אחי! אנא הקלט את דבריך לאחר הצליל, ובסיום הקש סולמית.'}]
-        : [{type:'text',data:'אנא הקלט את דבריך לאחר הצליל, ובסיום הקש סולמית.'}];
+        ? [{type:'text',data:'שלום, אני זיגי. דבר אחרי הצליל וסיים בהקשת סולמית. אחרי שאענה, הקש 1 כדי להתחיל הקלטה חדשה.'}]
+        : [{type:'text',data:''}];
       const recPath=await call.read(
         recordPrompt,
         'record',
@@ -415,13 +447,33 @@ async function callHandler(call) {
         [{type:'text',data:result.reply}],
         {prependToNextAction:true}
       );
+
+      // The previous answer is played first. Then Yemot listens silently for digit 1.
+      // Only digit 1 begins another recording; silence/other outcomes end the call.
+      const nextAction=await call.read(
+        [{type:'text',data:''}],
+        'tap',
+        {
+          min_digits:1,
+          max_digits:1,
+          digits_allowed:[1],
+          sec_wait:30,
+          amount_attempts:1,
+          allow_empty:true,
+          empty_val:'None'
+        }
+      );
+      console.log('[CALL '+id+'] next_action='+JSON.stringify(nextAction));
+      if(String(nextAction)!=='1') {
+        console.log('[CALL '+id+'] no_restart_key_hangup');
+        call.hangup();
+      }
     }
   } catch(e) {
+    if(e instanceof ExitError) throw e;
     console.error('[CALL '+id+'] ERROR',e?.stack||e);
     try {
-      try {
-        call.id_list_message([{type:'text',data:'מצטער הייתה תקלה זמנית נסה שוב'}]);
-      } catch {}
+      call.id_list_message([{type:'text',data:'מצטער הייתה תקלה זמנית נסה שוב'}]);
     } catch {}
   } finally {
     activeCalls.delete(id);
