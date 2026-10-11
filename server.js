@@ -481,31 +481,30 @@ async function callHandler(call) {
 
       activeCalls.get(id).lastActivity=Date.now();
 
-      await call.id_list_message(
-        [{type:'text',data:result.reply}],
-        {prependToNextAction:true}
-      );
-
-      // The previous answer is played first. Then Yemot listens silently for digit 1.
-      // Only digit 1 begins another recording; silence/other outcomes end the call.
-      const nextAction=await call.read(
-        [{type:'file',data:silentPromptPath}],
-        'tap',
-        {
-          min_digits:1,
-          max_digits:1,
-          digits_allowed:[1],
-          sec_wait:30,
-          amount_attempts:1,
-          allow_empty:true,
-          empty_val:'None'
+      // Play the answer inside the same read action that listens for DTMF.
+      // This lets Yemot register digit 1 while the answer is being played.
+      let nextAction;
+      do {
+        nextAction = await call.read(
+          [{type:'text',data:result.reply}],
+          'tap',
+          {
+            min_digits:1,
+            max_digits:1,
+            digits_allowed:[1],
+            sec_wait:30,
+            amount_attempts:1,
+            allow_empty:true,
+            empty_val:'None',
+            removeInvalidChars:true
+          }
+        );
+        console.log('[CALL '+id+'] next_action='+JSON.stringify(nextAction));
+        if(String(nextAction)!=='1') {
+          console.log('[CALL '+id+'] still_waiting_for_restart_key');
         }
-      );
-      console.log('[CALL '+id+'] next_action='+JSON.stringify(nextAction));
-      if(String(nextAction)!=='1') {
-        console.log('[CALL '+id+'] no_restart_key_hangup');
-        call.hangup();
-      }
+      } while(String(nextAction)!=='1');
+      console.log('[CALL '+id+'] restart_key_received');
     }
   } catch(e) {
     if(e instanceof ExitError) throw e;
