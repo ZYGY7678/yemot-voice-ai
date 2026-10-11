@@ -363,6 +363,22 @@ async function liveTurn(live, buf) {
   return result;
 }
 
+async function transcribeAudioOnly(ai, model, buf) {
+  const response = await timeout(ai.models.generateContent({
+    model,
+    contents:[{
+      role:'user',
+      parts:[
+        {text:'תמלל במדויק את הדיבור שבהקלטה המצורפת בעברית. החזר רק JSON תקין במבנה {"transcript":"הטקסט המדויק שנאמר"}. אם אין דיבור ברור, כתוב transcript ריק. אל תענה לשאלה ואל תסכם.'},
+        {inlineData:{mimeType:'audio/wav',data:buf.toString('base64')}}
+      ]
+    }],
+    config:{thinkingConfig:{thinkingLevel:'low'},responseMimeType:'application/json'}
+  }),20000,'Gemini transcript-only '+model);
+  const parsed=parseGeminiJson(response?.text||'');
+  return String(parsed.transcript||'').replace(/\\s+/g,' ').trim();
+}
+
 async function answerAudioFile(buf, history=[]) {
   let last;
   for (const apiKey of apiKeys) {
@@ -392,9 +408,18 @@ async function answerAudioFile(buf, history=[]) {
           config:{thinkingConfig:{thinkingLevel:'low'},responseMimeType:'application/json'}
         }),20000,'Gemini audio response '+model);
         const parsed=parseGeminiJson(response?.text||'');
-        const transcript=String(parsed.transcript||'').replace(/\s+/g,' ').trim();
+        let transcript=String(parsed.transcript||'').replace(/\s+/g,' ').trim();
         let reply=clean(parsed.reply||'');
-        if(!transcript && !reply) throw new Error('Gemini returned empty transcript and reply');
+        if(!transcript) {
+          try {
+            transcript=await transcribeAudioOnly(ai,model,buf);
+            console.log('[TRANSCRIPT_RECHECK]',JSON.stringify({model,transcript}));
+          } catch(e) {
+            console.error('[TRANSCRIPT_RECHECK_FAIL]',model,String(e?.message||e));
+          }
+        }
+        if(!transcript) transcript='לא זוהה תמלול ברור מההקלטה';
+        if(!reply) throw new Error('Gemini returned empty reply');
 
         // Ask Gemini to expand short answers, and verify the word count before speaking.
         for(let attempt=1;attempt<=3 && wordCount(reply)<50;attempt++) {
@@ -518,6 +543,7 @@ async function callHandler(call) {
       console.log('[CALL '+id+'] answer_read_action='+JSON.stringify(nextAction));
       // If the caller did not press 1 during playback, keep the call open silently.
       // Do not replay the long answer every 30 seconds.
+      let emptyWaits=0;
       while(String(nextAction)!=='1') {
         nextAction=await call.read(
           [{type:'file',data:silentPromptPath}],
@@ -533,6 +559,15 @@ async function callHandler(call) {
           }
         );
         console.log('[CALL '+id+'] silent_wait_action='+JSON.stringify(nextAction));
+        if(String(nextAction)!=='1') {
+          emptyWaits++;
+          // Prevent a tight loop if Yemot immediately returns None after a caller hangup.
+          await new Promise(resolve=>setTimeout(resolve,1000));
+          if(emptyWaits>=3) {
+            console.log('[CALL '+id+'] no_digit_after_answer; returning to recording');
+            break;
+          }
+        }
       }
       console.log('[CALL '+id+'] restart_key_received');
     }
