@@ -39,7 +39,7 @@ async function disableYemotWaitMusic() {
       api_wait_answer_music_on_hold:'no',
       api_wait_answer_music_on_hold_different:'',
       api_record_beep:'no',
-      option_record:'-1-30',
+      option_record:'--30',
       api_timeout:'60',
       tts_rate:'2',
       rate:'2'
@@ -350,12 +350,11 @@ async function callHandler(call) {
       activeCalls.get(id).lastActivity=Date.now();
 
       const recordStarted=Date.now();
-      // Play the greeting and recording instructions as Yemot text prompts before recording.
-      // This avoids uploaded opening-audio filenames that Yemot rejects, and prevents an empty prompt.
-      // Play only the greeting. Yemot handles recording termination by silence or #.
+      // Yemot TTS plays the greeting on the first turn and its recording instruction on every turn.
+      // Keep a non-empty prompt array: yemot-router2 rejects empty messages.
       const recordPrompt = turn === 0
-        ? [{type:'text',data:'היי, אני זיגי, מה איתך אחי!'}]
-        : [];
+        ? [{type:'text',data:'היי, אני זיגי, מה איתך אחי! אנא הקלט את דבריך לאחר הצליל, ובסיום הקש סולמית.'}]
+        : [{type:'text',data:'אנא הקלט את דבריך לאחר הצליל, ובסיום הקש סולמית.'}];
       const recPath=await call.read(
         recordPrompt,
         'record',
