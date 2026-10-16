@@ -1,0 +1,135 @@
+<!doctype html><html lang="he" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>בינה טלפונית AI — פתיחת מערכת אוטומטית</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;900&display=swap" rel="stylesheet">
+<style>
+:root{--ink:#0e1a2b;--paper:#f2f5f9;--surface:#fff;--line:#cfd8e3;--mut:#5b6b80;--sig:#0a9d94;--sig2:#087c75;--warn-bg:#fff4e0;--warn-fg:#6b4300;--bad:#c0392b;--r:14px}
+@media(prefers-color-scheme:dark){:root{--ink:#e8eef6;--paper:#0b121c;--surface:#121c2a;--line:#26364b;--mut:#93a4b9;--sig:#2dd4c8;--sig2:#5eead4;--warn-bg:#2b2111;--warn-fg:#f3d9a4;--bad:#ff8a7a}}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;font-family:Heebo,system-ui,Arial,sans-serif;background:var(--paper);color:var(--ink);line-height:1.65;font-size:16px}
+.hero{background:#0e1a2b;color:#eef3f9;padding:44px 18px 96px;position:relative;overflow:hidden}
+.hero .in{max-width:640px;margin:0 auto;position:relative;z-index:1}
+.hero h1{margin:0 0 10px;font-size:clamp(34px,9vw,54px);line-height:1.08;font-weight:900;letter-spacing:-.5px}
+.hero p{margin:0;max-width:34ch;color:#b8c6d8;font-size:18px}
+.hero svg{position:absolute;inset-inline-start:0;bottom:0;width:100%;height:70px;opacity:.9}
+.wrap{max-width:640px;margin:0 auto;padding:26px 18px 60px}
+.steps{position:relative}
+.step{position:relative;padding-inline-start:60px;padding-bottom:30px}
+.step::before{content:"";position:absolute;inset-inline-start:19px;top:42px;bottom:-4px;width:3px;border-radius:3px;background:var(--line);transition:background .5s}
+.step:last-of-type::before{display:none}
+.step.done::before{background:var(--sig)}
+.node{position:absolute;inset-inline-start:0;top:0;width:42px;height:42px;border-radius:50%;background:var(--surface);border:3px solid var(--line);display:grid;place-items:center;font-weight:900;font-size:18px;color:var(--mut);transition:all .35s}
+.step.done .node{background:var(--sig);border-color:var(--sig);color:#fff;font-size:0}
+.step.done .node::after{content:"";width:12px;height:7px;border-inline-start:3px solid #fff;border-bottom:3px solid #fff;transform:rotate(-45deg) translate(1px,-1px)}
+.step h2{margin:6px 0 10px;font-size:23px;font-weight:700;line-height:1.2}
+.step h2 .note{font-size:14px;font-weight:500;color:var(--sig2);margin-inline-start:6px}
+details{margin:0}
+summary{cursor:pointer;font-weight:500;color:var(--sig2);padding:6px 0;list-style:none}
+summary::-webkit-details-marker{display:none}
+summary::before{content:"";display:inline-block;width:7px;height:7px;border-inline-end:2px solid currentColor;border-bottom:2px solid currentColor;transform:rotate(45deg);margin-inline-end:9px;transition:transform .2s;position:relative;top:-2px}
+details[open]>summary::before{transform:rotate(-135deg);top:1px}
+ol{padding-inline-start:22px;margin:8px 0 12px}li{margin:6px 0}
+input,select{width:100%;padding:13px 14px;margin:6px 0;border-radius:11px;border:1.5px solid var(--line);background:var(--surface);color:var(--ink);font:inherit;font-size:16px;transition:border-color .15s,box-shadow .15s}
+input:focus,select:focus{outline:none;border-color:var(--sig);box-shadow:0 0 0 4px color-mix(in srgb,var(--sig) 22%,transparent)}
+input[type=checkbox]{width:auto;margin:0 0 0 8px;accent-color:var(--sig)}
+button,a.btn{display:block;text-align:center;text-decoration:none;width:100%;padding:13px;border:0;border-radius:11px;background:var(--ink);color:var(--paper);font:inherit;font-weight:700;font-size:17px;cursor:pointer;margin:8px 0;transition:transform .12s,background .15s}
+button:hover:not(:disabled),a.btn:hover{background:var(--sig2);color:#fff}
+button:active:not(:disabled){transform:scale(.985)}
+a.btn.s{background:transparent;color:var(--ink);border:1.5px solid var(--line);font-weight:500;font-size:15px;padding:10px}
+a.btn.s:hover{border-color:var(--sig);color:var(--sig2);background:transparent}
+button:disabled{opacity:.5;cursor:wait}
+:focus-visible{outline:3px solid var(--sig);outline-offset:2px}
+.note{color:var(--mut);font-size:14px}
+.warn{background:var(--warn-bg);color:var(--warn-fg);border-radius:12px;padding:12px 14px;font-size:14.5px;margin:10px 0}
+.warn ol{margin:6px 0}
+label{display:block;font-size:14px;color:var(--mut);margin-top:8px}
+code{direction:ltr;unicode-bidi:embed;word-break:break-all;background:color-mix(in srgb,var(--ink) 8%,transparent);padding:1px 6px;border-radius:6px;font-size:.92em}
+.go{position:sticky;bottom:0;background:linear-gradient(transparent,var(--paper) 35%);padding:22px 0 10px;margin-top:4px}
+.go button{font-size:19px;padding:16px;background:var(--sig2);color:#fff;box-shadow:0 8px 24px color-mix(in srgb,var(--sig) 35%,transparent)}
+.go button:hover:not(:disabled){background:var(--sig)}
+ul#log{list-style:none;padding:0;margin:8px 0}
+ul#log li{padding:10px 14px;border-radius:11px;background:var(--surface);border:1px solid var(--line);margin:6px 0;font-size:15px}
+.ok::before{content:"✅ "}.wt::before{content:"⏳ "}.er::before{content:"❌ "}
+li.er{border-color:var(--bad);color:var(--bad)}
+#res{margin-top:18px;padding:20px;border-radius:var(--r);background:#0e1a2b;color:#eef3f9}
+#res b{font-size:22px}#res code{background:rgba(255,255,255,.12);color:#fff}#res a{color:#5eead4}#res .note{color:#b8c6d8}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
+</style></head><body>
+<header class="hero"><div class="in"><h1>בינה טלפונית AI</h1><p>מחברים ארבעה חשבונות, לוחצים פעם אחת, ומחייגים לדבר עם הבינה.</p></div>
+<svg viewBox="0 0 600 70" preserveAspectRatio="none" aria-hidden="true"><path d="M0 40 C 50 5, 100 75, 150 40 S 250 5, 300 40 S 400 75, 450 40 S 550 5, 600 40" fill="none" stroke="#2dd4c8" stroke-width="3"/><path d="M0 52 C 60 20, 110 80, 170 52 S 270 20, 330 52 S 430 80, 490 52 S 570 28, 600 52" fill="none" stroke="#2dd4c8" stroke-opacity=".35" stroke-width="2"/></svg></header>
+<main class="wrap"><p class="note" style="margin-top:0">המפתחות עוברים רק לשירותים עצמם ולא נשמרים אצלנו.</p><div class="steps">
+
+<section class="step" id="s1"><span class="node">1</span><h2>GitHub <span id="g" class="note"></span></h2>
+<details open><summary>איך מתחברים</summary>
+<div id="oa" hidden><a class="btn" href="/auth/github">התחברות עם GitHub</a><p class="note">יפתח מסך אישור של GitHub. לוחצים Authorize ומוחזרים לכאן.</p></div>
+<div id="pa"><ol><li>התחברו ל-GitHub (או הירשמו), ואז לחצו על הכפתור למטה.</li><li>ייפתח דף יצירת אסימון עם ההרשאה <code>repo</code> כבר מסומנת (נדרשת ליצירת מאגר פרטי) ועם השם <code>ai-phone-setup</code>. אם GitHub מבקש סיסמה, הזינו אותה.</li><li>בתחתית הדף לחצו <b>Generate token</b>.</li><li>העתיקו מיד את האסימון (מתחיל ב-<code>ghp_</code>). הוא מוצג <b>פעם אחת בלבד</b>.</li><li>הדביקו כאן ולחצו <b>אימות טוקן</b>. תופיע הודעה "מחובר".</li></ol>
+<a class="btn s" target="_blank" rel="noopener" href="https://github.com/settings/tokens/new?scopes=repo&description=ai-phone-setup">פתיחת יצירת טוקן ב-GitHub</a>
+<input id="gt" type="password" dir="ltr" placeholder="ghp_..."><button id="gtb" type="button">אימות טוקן</button></div>
+<label><input type="checkbox" id="pub" style="width:auto"> מאגר ציבורי (פתרון אם Render לא מצליח לגשת למאגר פרטי; בקוד אין מפתחות)</label></details></section>
+
+<section class="step" id="s2"><span class="node">2</span><h2>Render</h2>
+<details open><summary>איך משיגים מפתח</summary>
+<ol><li>לחצו על הכפתור למטה. היכנסו ל-Render או הירשמו (אפשר להירשם עם GitHub).</li><li>לחצו על <b>סמל הפרופיל בפינה הימנית העליונה</b> ← <b>Account Settings</b>.</li><li>גללו למטה עד הסעיף <b>API Keys</b> ולחצו <b>Create API Key</b>.</li><li>תנו שם (למשל <code>ai-phone</code>) ולחצו שוב <b>Create API Key</b>.</li><li>העתיקו מיד את המפתח (מתחיל ב-<code>rnd_</code>). הוא מוצג במלואו <b>פעם אחת בלבד</b>. הדביקו אותו כאן.</li></ol>
+<a class="btn s" target="_blank" rel="noopener" href="https://dashboard.render.com">פתיחת Render</a>
+<input id="rk" type="password" dir="ltr" placeholder="rnd_...">
+<div class="warn"><b>חובה לפני ההקמה (במיוחד למאגר פרטי):</b><ol><li>ב-Render בהגדרות החשבון בסעיף <b>Git Deployment Credentials</b> התחברו ל-GitHub.</li><li>ב-GitHub פתחו את הקישור למטה, בחרו את Render ← Configure ← Repository access ← <b>All repositories</b> ← Save.</li></ol>
+<a class="btn s" target="_blank" rel="noopener" href="https://github.com/settings/installations">הרשאות אפליקציות ב-GitHub</a></div>
+<select id="plan"><option value="free">חינמי (נרדם אחרי 15 דקות ללא שימוש, השיחה הראשונה אחר כך תתעכב בכדקה)</option><option value="starter">Starter בתשלום (תמיד פעיל, דורש כרטיס אשראי ב-Render)</option></select></details></section>
+
+<section class="step" id="s3"><span class="node">3</span><h2>ימות המשיח</h2>
+<details open><summary>איך משיגים מפתח ושלוחה</summary>
+<ol><li>היכנסו לאתר הניהול של ימות המשיח ועברו ללשונית <b>אבטחה ← ניהול מפתחות גישה</b>.</li><li>צרו מפתח API חדש, והעתיקו אותו. מפתח כזה קבוע ופטור מאימות דו-שלבי.</li><li>אל תגבילו אותו בחומת האש (או אפשרו לו את השירותים <code>GetSession</code>, <code>UpdateExtension</code>, <code>GetTextFile</code>).</li><li>בחרו מספר שלוחה <b>פנוי</b> (למשל 9). האתר יהפוך אותה לשלוחת API.</li></ol>
+<a class="btn s" target="_blank" rel="noopener" href="https://www.call2all.co.il/ym/">אתר הניהול של ימות המשיח</a>
+<a class="btn s" target="_blank" rel="noopener" href="https://www.call2all.co.il/firewall">ניהול מפתחות (חומת אש)</a>
+<input id="yn" dir="ltr" inputmode="numeric" placeholder="מספר המערכת שלכם (להצגה בלבד)">
+<input id="yk" type="password" dir="ltr" placeholder="מפתח API של ימות המשיח">
+<input id="ye" dir="ltr" inputmode="numeric" placeholder="מספר שלוחה פנויה, למשל 9">
+<div class="warn">אם השלוחה כבר בשימוש, ההגדרות שלה ישתנו לשלוחת API. בחרו שלוחה ריקה.</div></details></section>
+
+<section class="step" id="s4"><span class="node">4</span><h2>הבינה המלאכותית</h2>
+<details open><summary>איך משיגים מפתח</summary>
+<p class="note">בחרו ספק בתפריט למטה. יופיעו כאן ההוראות המדויקות שלו.</p>
+<div class="gd" id="gd-openai" hidden><ol><li>היכנסו עם הכפתור, התחברו או הירשמו.</li><li>בדף API keys לחצו <b>Create new secret key</b>.</li><li>תנו שם ולחצו Create.</li><li>העתיקו מיד את המפתח (מתחיל ב-<code>sk-</code>). הוא מוצג פעם אחת בלבד.</li><li>נדרש יתרה בחשבון (Billing) כדי שהמפתח יעבוד.</li></ol><a class="btn s" target="_blank" rel="noopener" href="https://platform.openai.com/api-keys">פתיחת מפתחות OpenAI</a></div>
+<div class="gd" id="gd-anthropic" hidden><ol><li>היכנסו עם הכפתור, התחברו או הירשמו.</li><li>עברו ל-<b>Settings ← API Keys</b> ולחצו <b>Create Key</b>.</li><li>תנו שם והעתיקו מיד את המפתח (מתחיל ב-<code>sk-ant-</code>). הוא מוצג פעם אחת בלבד.</li><li>נדרש קרדיט בחשבון (Billing) כדי שהמפתח יעבוד.</li></ol><a class="btn s" target="_blank" rel="noopener" href="https://console.anthropic.com/settings/keys">פתיחת מפתחות Anthropic</a></div>
+<div class="gd" id="gd-gemini" hidden><ol><li>לחצו על הכפתור למטה והתחברו עם חשבון גוגל.</li><li>אם מופיעים תנאי שימוש, אשרו אותם.</li><li>לחצו <b>Create API key</b>.</li><li>אם מבקשים לבחור פרויקט, בחרו פרויקט קיים או צרו חדש (נוצר אוטומטית).</li><li>העתיקו את המפתח (מתחיל ב-<code>AIza</code>) והדביקו כאן. אפשר לראות אותו שוב באותו דף בכל עת.</li><li>יש מסלול חינמי ללא חיוב, אבל עם מגבלת בקשות לדקה. אם החשבון מנוהל על ידי ארגון או בית ספר, ייתכן שיצירת מפתח חסומה.</li></ol><a class="btn s" target="_blank" rel="noopener" href="https://aistudio.google.com/apikey">פתיחת מפתחות Gemini</a></div>
+<p class="note">אחרי שבחרתם מודל והדבקתם מפתח, האתר בודק לפני ההקמה שהם עובדים.</p>
+<select id="pv"><option value="openai">OpenAI</option><option value="anthropic">Anthropic (Claude)</option><option value="gemini">Google Gemini</option></select>
+<input id="md" list="ml" dir="ltr" placeholder="שם מודל"><datalist id="ml"></datalist>
+<input id="ak" type="password" dir="ltr" placeholder="מפתח API של הספק"></details></section>
+
+</div><div class="go"><button id="go" type="button">הקם מערכת</button></div><ul id="log"></ul><section id="res" hidden></section></main>
+<script>
+const $=i=>document.getElementById(i);let me=null;
+const upd=()=>{const d={s1:!!me,s2:/^rnd_.{10,}/.test($('rk').value.trim()),s3:$('yk').value.trim().length>5&&/^\d{1,4}$/.test($('ye').value.trim()),s4:$('md').value.trim().length>1&&$('ak').value.trim().length>8};for(const k in d)$(k).classList.toggle('done',d[k])};
+document.addEventListener('input',upd);
+const M={openai:['gpt-4o-mini','gpt-4o'],anthropic:['claude-haiku-5-5','claude-sonnet-5-5'],gemini:['gemini-2.5-flash','gemini-2.5-pro']};
+const fillM=()=>{$('ml').innerHTML=M[$('pv').value].map(x=>`<option value="${x}">`).join('');$('md').placeholder='למשל '+M[$('pv').value][0]};const showG=()=>{for(const k in M)$('gd-'+k).hidden=$('pv').value!==k};$('pv').onchange=()=>{fillM();showG()};fillM();showG();
+const setMe=l=>{me=l;if(l){$('g').textContent='מחובר: '+l}upd()};
+fetch('/api/config').then(r=>r.json()).then(d=>{setMe(d.login);$('oa').hidden=!d.oauth;$('pa').hidden=d.oauth});
+const post=async(u,b)=>{const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});const d=await r.json();if(!r.ok)throw new Error(d.error||'שגיאה');return d};
+$('gtb').onclick=async()=>{try{setMe((await post('/api/github-token',{token:$('gt').value})).login)}catch(e){alert(e.message)}};
+const step=t=>{const l=document.createElement('li');l.className='wt';l.textContent=t;$('log').append(l);return s=>{l.className=s}};
+const err=m=>{const l=document.createElement('li');l.className='er';l.textContent=m;$('log').append(l)};
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+$('go').onclick=async()=>{
+ const v={renderKey:$('rk').value.trim(),yemotKey:$('yk').value.trim(),ext:$('ye').value.trim(),provider:$('pv').value,model:$('md').value.trim(),aiKey:$('ak').value.trim(),plan:$('plan').value};
+ if(!me||!v.renderKey||!v.yemotKey||!v.ext||!v.model||!v.aiKey)return alert('יש להתחבר ל-GitHub ולמלא את כל השדות');
+ $('go').disabled=true;$('log').innerHTML='';$('res').hidden=true;
+ try{
+  let s=step('בודק את כל המפתחות לפני שמתחילים...');const c=await post('/api/check',v);
+  const names={render:'Render',yemot:'ימות המשיח',ai:'ספק הבינה'};let bad=false;
+  for(const k in c)if(!c[k].ok){bad=true;err(names[k]+': '+c[k].error)}
+  if(bad){s('er');throw new Error('תקנו את הפרטים ולחצו שוב. לא נוצר דבר.')}s('ok');
+  s=step('יוצר מאגר ב-GitHub...');const r1=await post('/api/repo',{isPublic:$('pub').checked});s('ok');
+  s=step('יוצר שירות ב-Render ומפעיל פריסה...');const r2=await post('/api/render',{...v,repo:r1.repo,branch:r1.branch});s('ok');
+  s=step('ממתין לבנייה ולעליית השרת (2 עד 6 דקות)...');let st={};
+  for(let i=0;i<60;i++){await sleep(8000);st=await post('/api/status',{renderKey:v.renderKey,serviceId:r2.serviceId});if(st.up||st.failed)break}
+  if(st.failed){s('er');throw new Error('הפריסה נכשלה. אם המאגר פרטי, ודאו שרנדר מחובר ל-GitHub (שלב 2) או סמנו "מאגר ציבורי". לוגים: '+(st.dashboardUrl||''))}
+  if(!st.up){s('er');throw new Error('השרת עדיין לא עלה. בדקו ב-Render: '+(st.dashboardUrl||''))}s('ok');
+  s=step('מגדיר את שלוחת ימות המשיח...');const y=await post('/api/yemot',{yemotKey:v.yemotKey,ext:v.ext,url:st.url});s('ok');
+  s=step('בדיקת תקינות סופית...');const t=await post('/api/selftest',{url:st.url});
+  if(!t.ai||!t.ivr){s('er');throw new Error((t.ai?'':'הבינה המלאכותית לא ענתה. ')+(t.ivr?'':'נקודת הטלפון לא ענתה כמצופה.'))}s('ok');
+  $('res').hidden=false;$('res').innerHTML=`<b>המערכת פעילה ✅</b><p>כתובת השרת: <code>${st.url}</code></p><p>כתובת שלוחת ה-API שהוגדרה בימות: <code>${y.link}</code></p><p>כדי לנסות: חייגו למספר המערכת ובחרו בשלוחה <b>${v.ext}</b>, ואחרי ההשמעה אמרו שאלה.</p>${$('plan').value==='free'?'<p class="note">במסלול החינמי השרת נרדם אחרי 15 דקות. אפשר להוסיף ניטור חינמי ב-<a target="_blank" rel="noopener" href="https://uptimerobot.com">uptimerobot.com</a> שמבקש את <code>'+st.url+'/health</code> כל 5 דקות.</p>':''}`;
+ }catch(e){err(e.message)}
+ $('go').disabled=false};
+</script></body></html>
