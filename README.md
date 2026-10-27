@@ -1,21 +1,20 @@
-# YEMOT Voice AI
+# מתקין אוטומטי — Yemot AI Line
 
-קו טלפון אישי מבוסס ימות המשיח ו-Google Gemini Audio.
+הענף הזה מפעיל את אתר ההתקנה האוטומטית ב-Render. קובצי היישום עצמם נארזים בתוך `project.part00` עד `project.part03`, ומחולצים בבניית Docker אל תיקיית היישום.
 
-## הפעלה
-1. התקן Node.js 20 ומעלה.
-2. הרץ `npm install`.
-3. הגדר את משתני הסביבה לפי `.env.example`.
-4. הרץ `npm start`.
+## שימוש
+1. פתחו את `https://yemot-ai-line-installer.onrender.com/admin`.
+2. הזדהו עם שם משתמש `admin` וסיסמת הניהול שנמסרה לכם באופן פרטי.
+3. מלאו Gemini API key, Render API key, GitHub Personal Access Token, מספר מערכת וסיסמת ימות המשיח.
+4. בחרו שם מאגר GitHub, שם שירות Render ו(אופציונלי) מספר שלוחה לחיבור אוטומטי.
+5. לחצו על **בנה, העלה ופרוס אוטומטית** והמתינו להודעת תוצאה. בסיום, שמרו את כתובת השירות והסיסמה החדשה שהוא מציג.
 
-## Render
-הקובץ `render.yaml` מגדיר Web Service מסוג Node עם `npm install` ו-`npm start`.
+## מודלים
+- שיחה והבנת שמע: `gemini-3.8-flash`
+- יצירת קול/שירים: `gemini-3.8-flash-tts`
 
-## ימות המשיח
-לאחר שהשרת זמין, הגדר את `PUBLIC_BASE_URL` והריץ:
-`node yemot_setup/auto_setup_yemot.js <YEMOT_TOKEN> <RENDER_URL> 1`
+## אבטחה
+אין לשמור מפתחות API ב-GitHub או להדביק אותם בצ'אט. טוקן GitHub, מפתח Render, מפתח Gemini וסיסמת ימות המשיח נשלחים דרך טופס HTTPS. השתמשו במאגר פרטי אם תרצו לשמור את קוד השירות החדש בפרטיות.
 
-בדיקת שרת:
-`GET /health`
-
-לוח הבקרה מוגן באמצעות `DASHBOARD_PASSWORD`.
+## בדיקות ותקלות
+כתובת הבסיס של המתקין מציגה הודעת מצב. דף הניהול מוגן ב-Basic Auth. אחרי יצירת השירות החדש, פתחו את דף הניהול של השירות החדש ובחרו "בדוק חיבורים".
