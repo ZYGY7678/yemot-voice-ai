@@ -34,8 +34,8 @@ server = replace_once(
 
 server = regex_once(
     server,
-    r"res\.type\((['\"])html\1\)\.send\(\s*renderSetupPage\(\)\s*\)",
-    "res.type('html').send(renderAuthPage())",
+    r"renderSetupPage\(\)(?!\s*\{)",
+    "renderAuthPage()",
     "show login form instead of setup wizard"
 )
 
