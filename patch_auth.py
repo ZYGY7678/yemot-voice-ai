@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 server_path = Path("/app/server.js")
@@ -14,17 +15,27 @@ def replace_once(source, old, new, label, required=True):
     print(f"PATCH_OK: {label}")
     return source.replace(old, new, 1)
 
-server = replace_once(
-    server,
-    "import express from 'express';",
-    "import express from 'express';\nimport { createHmac } from 'node:crypto';",
-    "import HMAC helper"
-)
+def regex_once(source, pattern, replacement, label, required=True, flags=0):
+    result, count = re.subn(pattern, replacement, source, count=1, flags=flags)
+    if count != 1:
+        if not required:
+            print(f"PATCH_OPTIONAL_NOT_FOUND: {label}")
+            return source
+        raise RuntimeError(f"Regex patch {label!r} expected once, found {count}")
+    print(f"PATCH_OK: {label}")
+    return result
 
 server = replace_once(
     server,
-    "if (!firebaseConfigured()) return res.type('html').send(renderSetupPage());",
-    "if (!firebaseConfigured()) return res.type('html').send(renderAuthPage());",
+    "import express from 'express';",
+    "import express from 'express';\\nimport { createHmac } from 'node:crypto';",
+    "import HMAC helper"
+)
+
+server = regex_once(
+    server,
+    r"res\\.type\\(('|\\\")html\\1\\)\\.send\\(\\s*renderSetupPage\\(\\)\\s*\\)",
+    "res.type('html').send(renderAuthPage())",
     "show login form instead of setup wizard"
 )
 
@@ -79,9 +90,9 @@ server_path.write_text(server, encoding="utf-8")
 if not admin_path.exists():
     raise RuntimeError("admin.js missing after archive extraction")
 admin = admin_path.read_text(encoding="utf-8")
-admin = replace_once(
+admin = regex_once(
     admin,
-    '<label>כתובת מייל</label><input type="email" id="email" autocomplete="email" required>',
+    r'<label>כתובת מייל</label>\\s*<input type="email" id="email" autocomplete="email" required>',
     '<label>שם משתמש או כתובת מייל</label><input type="text" id="email" autocomplete="username" required>',
     "allow username input on login page",
     required=False
