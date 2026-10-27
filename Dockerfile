@@ -4,6 +4,6 @@ RUN curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp 
 WORKDIR /app
 COPY bundle00.* /tmp/
 COPY project.part01 project.part02 project.part03 /tmp/
-RUN cat /tmp/bundle00.* /tmp/project.part01 /tmp/project.part02 /tmp/project.part03 | base64 -d | tar -xJ -C /app && echo '---AUTH_UI_FILE_SCAN---' && find /app -maxdepth 4 -type f ! -path '*/node_modules/*' | sort | head -250 && echo '---AUTH_UI_MATCHES---' && grep -RIl --exclude-dir=node_modules -E 'הגדרת הרשמה|Web API Key|אימות מייל|Firebase' /app | head -100 && rm -f /tmp/bundle00.* /tmp/project.part01 /tmp/project.part02 /tmp/project.part03 && npm install --omit=dev
+RUN cat /tmp/bundle00.* /tmp/project.part01 /tmp/project.part02 /tmp/project.part03 | base64 -d | tar -xJ -C /app && echo '---ADMIN_JS_SOURCE---' && sed -n '1,400p' /app/admin.js && echo '---SERVER_AUTH_MATCHES---' && grep -n -E 'Firebase|signUp|signIn|register|email|auth|admin' /app/server.js | head -200 && rm -f /tmp/bundle00.* /tmp/project.part01 /tmp/project.part02 /tmp/project.part03 && npm install --omit=dev
 ENV NODE_ENV=production
 CMD ["node", "server.js"]
