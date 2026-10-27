@@ -28,13 +28,13 @@ def regex_once(source, pattern, replacement, label, required=True, flags=0):
 server = replace_once(
     server,
     "import express from 'express';",
-    "import express from 'express';\\nimport { createHmac } from 'node:crypto';",
+    "import express from 'express';\nimport { createHmac } from 'node:crypto';",
     "import HMAC helper"
 )
 
 server = regex_once(
     server,
-    r"res\\.type\\(('|\\\")html\\1\\)\\.send\\(\\s*renderSetupPage\\(\\)\\s*\\)",
+    r"res\.type\((['\"])html\1\)\.send\(\s*renderSetupPage\(\)\s*\)",
     "res.type('html').send(renderAuthPage())",
     "show login form instead of setup wizard"
 )
@@ -92,7 +92,7 @@ if not admin_path.exists():
 admin = admin_path.read_text(encoding="utf-8")
 admin = regex_once(
     admin,
-    r'<label>כתובת מייל</label>\\s*<input type="email" id="email" autocomplete="email" required>',
+    r'<label>כתובת מייל</label>\s*<input type="email" id="email" autocomplete="email" required>',
     '<label>שם משתמש או כתובת מייל</label><input type="text" id="email" autocomplete="username" required>',
     "allow username input on login page",
     required=False
